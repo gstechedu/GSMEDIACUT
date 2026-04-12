@@ -21,6 +21,7 @@ export interface DraggableItemProps {
 	dragData: TimelineDragData;
 	onDragStart?: ({ e }: { e: React.DragEvent }) => void;
 	onAddToTimeline?: ({ currentTime }: { currentTime: number }) => void;
+	onDoubleClick?: () => void;
 	aspectRatio?: number;
 	className?: string;
 	containerClassName?: string;
@@ -37,6 +38,7 @@ export function DraggableItem({
 	dragData,
 	onDragStart,
 	onAddToTimeline,
+	onDoubleClick,
 	aspectRatio = 16 / 9,
 	className = "",
 	containerClassName,
@@ -113,6 +115,7 @@ export function DraggableItem({
 							draggable={isDraggable}
 							onDragStart={isDraggable ? handleDragStart : undefined}
 							onDragEnd={isDraggable ? handleDragEnd : undefined}
+							onDoubleClick={onDoubleClick}
 						>
 							{preview}
 							{!isDragging && (
@@ -152,6 +155,7 @@ export function DraggableItem({
 						draggable={isDraggable}
 						onDragStart={isDraggable ? handleDragStart : undefined}
 						onDragEnd={isDraggable ? handleDragEnd : undefined}
+						onDoubleClick={onDoubleClick}
 					>
 						<div className="size-6 shrink-0 overflow-hidden rounded-sm">
 							{preview}

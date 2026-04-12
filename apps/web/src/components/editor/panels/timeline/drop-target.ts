@@ -1,8 +1,22 @@
 import type { TimelineTrack, TimelineElement } from "@/lib/timeline";
 import type { ComputeDropTargetParams, DropTarget } from "@/lib/timeline";
 import { resolveTrackPlacement } from "@/lib/timeline/placement";
+import { TICKS_PER_SECOND } from "@/lib/wasm";
 import { TIMELINE_TRACK_GAP_PX } from "./layout";
 import { getTrackHeight } from "./track-layout";
+
+function timeFromMouseX({
+	mouseX,
+	pixelsPerSecond,
+	zoomLevel,
+}: {
+	mouseX: number;
+	pixelsPerSecond: number;
+	zoomLevel: number;
+}): number {
+	const seconds = Math.max(0, mouseX / (pixelsPerSecond * zoomLevel));
+	return Math.round(seconds * TICKS_PER_SECOND);
+}
 
 function findElementAtPosition({
 	mouseX,
@@ -19,7 +33,7 @@ function findElementAtPosition({
 	pixelsPerSecond: number;
 	zoomLevel: number;
 }): { elementId: string; trackId: string } | null {
-	const time = mouseX / (pixelsPerSecond * zoomLevel);
+	const time = timeFromMouseX({ mouseX, pixelsPerSecond, zoomLevel });
 	const track = tracks[trackIndex];
 	if (!track || !("elements" in track)) return null;
 
@@ -106,19 +120,20 @@ export function computeDropTarget({
 	targetElementTypes,
 }: ComputeDropTargetParams): DropTarget {
 	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
-	const mainTrackIndex = tracks.overlay.length;
 	const xPosition =
 		typeof startTimeOverride === "number"
 			? startTimeOverride
 			: isExternalDrop
 				? playheadTime
-				: Math.max(0, mouseX / (pixelsPerSecond * zoomLevel));
+				: timeFromMouseX({ mouseX, pixelsPerSecond, zoomLevel });
 
 	if (orderedTracks.length === 0) {
 		const placementResult = resolveTrackPlacement({
 			tracks,
 			elementType,
-			timeSpans: [{ startTime: xPosition, duration: elementDuration, excludeElementId }],
+			timeSpans: [
+				{ startTime: xPosition, duration: elementDuration, excludeElementId },
+			],
 			strategy: {
 				type: "preferIndex",
 				trackIndex: 0,
@@ -153,7 +168,9 @@ export function computeDropTarget({
 		const placementResult = resolveTrackPlacement({
 			tracks,
 			elementType,
-			timeSpans: [{ startTime: xPosition, duration: elementDuration, excludeElementId }],
+			timeSpans: [
+				{ startTime: xPosition, duration: elementDuration, excludeElementId },
+			],
 			strategy: {
 				type: "preferIndex",
 				trackIndex: isAboveAllTracks ? 0 : orderedTracks.length - 1,
@@ -203,7 +220,9 @@ export function computeDropTarget({
 	const placementResult = resolveTrackPlacement({
 		tracks,
 		elementType,
-		timeSpans: [{ startTime: xPosition, duration: elementDuration, excludeElementId }],
+		timeSpans: [
+			{ startTime: xPosition, duration: elementDuration, excludeElementId },
+		],
 		strategy: {
 			type: "preferIndex",
 			trackIndex,

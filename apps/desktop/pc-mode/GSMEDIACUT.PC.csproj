@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>false</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>GSMEDIACUT.PC</AssemblyName>
+    <RootNamespace>GSMEDIACUT.PC</RootNamespace>
+    <EnableDefaultItems>true</EnableDefaultItems>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\GSMEDIACUT.ico</ApplicationIcon>
+    <StartupObject>GSMEDIACUT.PC.App</StartupObject>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2957.106" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="Assets\GSMEDIACUT.ico" />
+    <Content Include="Assets\GSMEDIACUT.ico" />
+  </ItemGroup>
+</Project>

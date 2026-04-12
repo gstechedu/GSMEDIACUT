@@ -16,12 +16,17 @@ import type {
 	SerializedProject,
 	SerializedScene,
 } from "./types";
-import type { SavedSoundsData, SavedSound, SoundEffect } from "@/lib/sounds/types";
+import type {
+	SavedSoundsData,
+	SavedSound,
+	SoundEffect,
+} from "@/lib/sounds/types";
 import {
 	migrations,
 	runStorageMigrations,
 } from "@/services/storage/migrations";
 import type { Bookmark, SceneTracks, TScene } from "@/lib/timeline";
+import { TICKS_PER_SECOND } from "@/lib/wasm";
 
 function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 	if (!Array.isArray(raw)) return [];
@@ -113,11 +118,7 @@ class StorageService {
 		return isStorageQuotaExceededError({ error });
 	}
 
-	private stripAudioBuffers({
-		tracks,
-	}: {
-		tracks: SceneTracks;
-	}): SceneTracks {
+	private stripAudioBuffers({ tracks }: { tracks: SceneTracks }): SceneTracks {
 		return {
 			...tracks,
 			audio: tracks.audio.map((track) => ({
@@ -128,6 +129,22 @@ class StorageService {
 				}),
 			})),
 		};
+	}
+
+	private normalizeMediaTimeValue({
+		value,
+		fallback,
+	}: {
+		value: number | undefined;
+		fallback: number;
+	}): number {
+		if (typeof value !== "number" || Number.isNaN(value)) {
+			return fallback;
+		}
+		if (!Number.isInteger(value)) {
+			return Math.max(0, Math.round(value * TICKS_PER_SECOND));
+		}
+		return Math.max(0, value);
 	}
 
 	async saveProject({ project }: { project: TProject }): Promise<void> {
@@ -149,7 +166,10 @@ class StorageService {
 				id: project.metadata.id,
 				name: project.metadata.name,
 				thumbnail: project.metadata.thumbnail,
-				duration,
+				duration: this.normalizeMediaTimeValue({
+					value: duration,
+					fallback: 0,
+				}),
 				createdAt: project.metadata.createdAt.toISOString(),
 				updatedAt: project.metadata.updatedAt.toISOString(),
 			},
@@ -189,9 +209,12 @@ class StorageService {
 				id: serializedProject.metadata.id,
 				name: serializedProject.metadata.name,
 				thumbnail: serializedProject.metadata.thumbnail,
-				duration:
-					serializedProject.metadata.duration ??
-					getProjectDurationFromScenes({ scenes }),
+				duration: this.normalizeMediaTimeValue({
+					value:
+						serializedProject.metadata.duration ??
+						getProjectDurationFromScenes({ scenes }),
+					fallback: getProjectDurationFromScenes({ scenes }),
+				}),
 				createdAt: new Date(serializedProject.metadata.createdAt),
 				updatedAt: new Date(serializedProject.metadata.updatedAt),
 			},
@@ -229,11 +252,14 @@ class StorageService {
 			id: serializedProject.metadata.id,
 			name: serializedProject.metadata.name,
 			thumbnail: serializedProject.metadata.thumbnail,
-			duration:
-				serializedProject.metadata.duration ??
-				getProjectDurationFromScenes({
-					scenes: (serializedProject.scenes ?? []) as unknown as TScene[],
-				}),
+			duration: this.normalizeMediaTimeValue({
+				value:
+					serializedProject.metadata.duration ??
+					getProjectDurationFromScenes({
+						scenes: (serializedProject.scenes ?? []) as unknown as TScene[],
+					}),
+				fallback: 0,
+			}),
 			createdAt: new Date(serializedProject.metadata.createdAt),
 			updatedAt: new Date(serializedProject.metadata.updatedAt),
 		}));
@@ -265,7 +291,10 @@ class StorageService {
 			lastModified: mediaAsset.file.lastModified,
 			width: mediaAsset.width,
 			height: mediaAsset.height,
-			duration: mediaAsset.duration,
+			duration: this.normalizeMediaTimeValue({
+				value: mediaAsset.duration,
+				fallback: 0,
+			}),
 			thumbnailUrl: mediaAsset.thumbnailUrl,
 			ephemeral: mediaAsset.ephemeral,
 		};
@@ -332,7 +361,10 @@ class StorageService {
 			url,
 			width: metadata.width,
 			height: metadata.height,
-			duration: metadata.duration,
+			duration: this.normalizeMediaTimeValue({
+				value: metadata.duration,
+				fallback: 0,
+			}),
 			thumbnailUrl: metadata.thumbnailUrl,
 			ephemeral: metadata.ephemeral,
 		};

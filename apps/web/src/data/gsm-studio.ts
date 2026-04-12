@@ -92,9 +92,9 @@ export const STUDIO_FEATURE_CARDS: StudioFeatureCard[] = [
 		id: "cleanup",
 		title: "Watermark Removal",
 		description:
-			"Research repos are local. Keep this as an opt-in desktop cleanup workflow first.",
+			"Choose a clip, pick a local engine, and prepare a desktop cleanup workflow from Settings.",
 		tab: "settings",
-		status: "planned",
+		status: "in-progress",
 	},
 ];
 

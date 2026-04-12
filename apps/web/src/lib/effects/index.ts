@@ -8,6 +8,14 @@ import { VISUAL_ELEMENT_TYPES } from "@/lib/timeline";
 export { effectsRegistry } from "./registry";
 export { registerDefaultEffects } from "./definitions";
 
+const TIME_AWARE_SHADERS = new Set([
+	"pro-glitch",
+	"rgb-split",
+	"vhs",
+	"crt",
+	"heat-wave",
+]);
+
 export function resolveEffectPasses({
 	definition,
 	effectParams,
@@ -31,18 +39,30 @@ export function resolveEffectPasses({
 			})
 			.map((pass) => ({
 				...pass,
-				uniforms: {
-					...pass.uniforms,
-					u_time: timeSeconds,
-				},
+				uniforms: TIME_AWARE_SHADERS.has(pass.shader)
+					? {
+							...pass.uniforms,
+							u_time: timeSeconds,
+						}
+					: pass.uniforms,
 			}));
 	}
 	return definition.renderer.passes.map((pass) => ({
 		shader: pass.shader,
-		uniforms: {
-			...pass.uniforms({ effectParams, width, height, timeSeconds }),
-			u_time: timeSeconds,
-		},
+		uniforms: (() => {
+			const uniforms = pass.uniforms({
+				effectParams,
+				width,
+				height,
+				timeSeconds,
+			});
+			return TIME_AWARE_SHADERS.has(pass.shader)
+				? {
+						...uniforms,
+						u_time: timeSeconds,
+					}
+				: uniforms;
+		})(),
 	}));
 }
 

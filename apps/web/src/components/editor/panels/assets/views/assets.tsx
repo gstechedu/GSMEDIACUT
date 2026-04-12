@@ -25,6 +25,14 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+	Dialog,
+	DialogBody,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { DEFAULT_NEW_ELEMENT_DURATION } from "@/lib/timeline/creation";
 import { useEditor } from "@/hooks/use-editor";
 import { useFileUpload } from "@/hooks/use-file-upload";
@@ -47,6 +55,7 @@ import {
 import { MASKABLE_ELEMENT_TYPES } from "@/lib/timeline";
 import type { MediaAsset } from "@/lib/media/types";
 import { cn } from "@/utils/ui";
+import { TICKS_PER_SECOND } from "@/lib/wasm";
 import {
 	CloudUploadIcon,
 	GridViewIcon,
@@ -75,6 +84,7 @@ export function MediaView() {
 
 	const [isProcessing, setIsProcessing] = useState(false);
 	const [progress, setProgress] = useState(0);
+	const [previewAsset, setPreviewAsset] = useState<MediaAsset | null>(null);
 
 	const processFiles = async ({ files }: { files: File[] }) => {
 		if (!files || files.length === 0) return;
@@ -86,6 +96,14 @@ export function MediaView() {
 		setIsProcessing(true);
 		setProgress(0);
 		try {
+			const activeScene = editor.scenes.getActiveSceneOrNull();
+			const shouldAutoInsertIntoEmptyTimeline = Boolean(
+				activeScene &&
+					activeScene.tracks.overlay.length === 0 &&
+					activeScene.tracks.audio.length === 0 &&
+					activeScene.tracks.main.elements.length === 0,
+			);
+
 			await showMediaUploadToast({
 				filesCount: files.length,
 				promise: async () => {
@@ -94,11 +112,35 @@ export function MediaView() {
 						onProgress: (progress: { progress: number }) =>
 							setProgress(progress.progress),
 					});
+					let nextStartTime = 0;
 					for (const asset of processedAssets) {
-						await editor.media.addMediaAsset({
+						const createdAsset = await editor.media.addMediaAsset({
 							projectId: activeProject.metadata.id,
 							asset,
 						});
+						if (!createdAsset) {
+							continue;
+						}
+
+						if (shouldAutoInsertIntoEmptyTimeline) {
+							const duration =
+								createdAsset.duration ?? DEFAULT_NEW_ELEMENT_DURATION;
+							const element = buildElementFromMedia({
+								mediaId: createdAsset.id,
+								mediaType: createdAsset.type,
+								name: createdAsset.name,
+								duration,
+								startTime: nextStartTime,
+							});
+							editor.timeline.insertElement({
+								element,
+								placement: { mode: "auto" },
+							});
+							nextStartTime += duration;
+						}
+					}
+					if (shouldAutoInsertIntoEmptyTimeline && processedAssets.length > 0) {
+						window.dispatchEvent(new CustomEvent("timeline-fit-requested"));
 					}
 					return {
 						uploadedCount: processedAssets.length,
@@ -223,10 +265,19 @@ export function MediaView() {
 							items={filteredMediaItems}
 							mode={mediaViewMode}
 							onRemove={handleRemove}
+							onPreview={setPreviewAsset}
 						/>
 					</SelectableSurface>
 				)}
 			</PanelView>
+			<MediaPreviewDialog
+				asset={previewAsset}
+				onOpenChange={(open) => {
+					if (!open) {
+						setPreviewAsset(null);
+					}
+				}}
+			/>
 		</>
 	);
 }
@@ -241,11 +292,13 @@ function MediaAssetDraggable({
 	preview,
 	variant,
 	isRounded,
+	onDoubleClick,
 }: {
 	item: MediaAsset;
 	preview: React.ReactNode;
 	variant: "card" | "compact";
 	isRounded?: boolean;
+	onDoubleClick?: () => void;
 }) {
 	const editor = useEditor();
 
@@ -256,8 +309,7 @@ function MediaAssetDraggable({
 		asset: MediaAsset;
 		startTime: number;
 	}) => {
-		const duration =
-			asset.duration ?? DEFAULT_NEW_ELEMENT_DURATION;
+		const duration = asset.duration ?? DEFAULT_NEW_ELEMENT_DURATION;
 		const element = buildElementFromMedia({
 			mediaId: asset.id,
 			mediaType: asset.type,
@@ -288,6 +340,7 @@ function MediaAssetDraggable({
 			onAddToTimeline={({ currentTime }) =>
 				addElementAtTime({ asset: item, startTime: currentTime })
 			}
+			onDoubleClick={onDoubleClick}
 			variant={variant}
 			isRounded={isRounded}
 		/>
@@ -336,6 +389,7 @@ function MediaItemList({
 	items,
 	mode,
 	onRemove,
+	onPreview,
 }: {
 	items: MediaAsset[];
 	mode: MediaViewMode;
@@ -346,6 +400,7 @@ function MediaItemList({
 		event: React.MouseEvent;
 		ids: string[];
 	}) => void;
+	onPreview: (asset: MediaAsset) => void;
 }) {
 	const isGrid = mode === "grid";
 
@@ -369,6 +424,7 @@ function MediaItemList({
 							}
 							variant={isGrid ? "card" : "compact"}
 							isRounded={isGrid ? false : undefined}
+							onDoubleClick={() => onPreview(item)}
 						/>
 					</SelectableItem>
 				</MediaItemWithContextMenu>
@@ -377,9 +433,90 @@ function MediaItemList({
 	);
 }
 
+function MediaPreviewDialog({
+	asset,
+	onOpenChange,
+}: {
+	asset: MediaAsset | null;
+	onOpenChange: (open: boolean) => void;
+}) {
+	return (
+		<Dialog open={asset !== null} onOpenChange={onOpenChange}>
+			<DialogContent className="max-w-4xl">
+				<DialogHeader>
+					<DialogTitle className="truncate pr-10">
+						{asset?.name ?? "Media preview"}
+					</DialogTitle>
+					<DialogDescription>
+						Double-click from Media to preview a file before adding it to the
+						timeline.
+					</DialogDescription>
+				</DialogHeader>
+				<DialogBody className="pt-0">
+					{asset ? <MediaPreviewSurface asset={asset} /> : null}
+				</DialogBody>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function MediaPreviewSurface({ asset }: { asset: MediaAsset }) {
+	if (asset.type === "video") {
+		return (
+			<video
+				src={asset.url}
+				controls
+				controlsList="nodownload noplaybackrate"
+				disablePictureInPicture
+				disableRemotePlayback
+				playsInline
+				preload="metadata"
+				className="max-h-[70vh] w-full rounded-md bg-black"
+				onContextMenu={(event) => event.preventDefault()}
+			>
+				<track kind="captions" />
+			</video>
+		);
+	}
+
+	if (asset.type === "audio") {
+		return (
+			<div className="flex min-h-56 items-center justify-center rounded-md border bg-accent/20 p-6">
+				<audio
+					src={asset.url}
+					controls
+					controlsList="nodownload noplaybackrate"
+					preload="metadata"
+					className="w-full max-w-2xl"
+					onContextMenu={(event) => event.preventDefault()}
+				>
+					<track kind="captions" />
+				</audio>
+			</div>
+		);
+	}
+
+	return (
+		<div className="relative min-h-80 overflow-hidden rounded-md border bg-muted">
+			<Image
+				src={asset.url ?? ""}
+				alt={asset.name}
+				fill
+				sizes="100vw"
+				className="object-contain"
+				unoptimized
+			/>
+		</div>
+	);
+}
+
 function formatDuration({ duration }: { duration: number }) {
-	const min = Math.floor(duration / 60);
-	const sec = Math.floor(duration % 60);
+	const totalSeconds = duration / TICKS_PER_SECOND;
+	if (totalSeconds < 1) {
+		return `${totalSeconds.toFixed(2)}s`;
+	}
+	const min = Math.floor(totalSeconds / 60);
+	const sec = Math.floor(totalSeconds % 60);
 	return `${min}:${sec.toString().padStart(2, "0")}`;
 }
 

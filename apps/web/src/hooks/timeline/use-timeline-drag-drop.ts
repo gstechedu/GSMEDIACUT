@@ -46,7 +46,11 @@ export function useTimelineDragDrop({
 	const getSnappedTime = useCallback(
 		({ time }: { time: number }) => {
 			const projectFps = editor.project.getActive().settings.fps;
-			return roundToFrame({ time, rate: projectFps }) ?? time;
+			const normalizedTime = Math.round(time);
+			return (
+				roundToFrame({ time: normalizedTime, rate: projectFps }) ??
+				normalizedTime
+			);
 		},
 		[editor],
 	);
@@ -341,8 +345,7 @@ export function useTimelineDragDrop({
 			const trackType: TrackType =
 				dragData.mediaType === "audio" ? "audio" : "video";
 
-			const duration =
-				mediaAsset.duration ?? DEFAULT_NEW_ELEMENT_DURATION;
+			const duration = mediaAsset.duration ?? DEFAULT_NEW_ELEMENT_DURATION;
 			const element = buildElementFromMedia({
 				mediaId: mediaAsset.id,
 				mediaType: mediaAsset.type,
@@ -464,8 +467,7 @@ export function useTimelineDragDrop({
 						if (!createdAsset) continue;
 
 						const duration =
-							createdAsset.duration ??
-							DEFAULT_NEW_ELEMENT_DURATION;
+							createdAsset.duration ?? DEFAULT_NEW_ELEMENT_DURATION;
 						const sceneTracks = editor.scenes.getActiveScene().tracks;
 						const currentTime = editor.playback.getCurrentTime();
 						const reuseMainTrackId =

@@ -20,6 +20,7 @@ import {
 	RainDropIcon,
 	MusicNote03Icon,
 	MagicWand05Icon,
+	MagicWand03Icon,
 	DashboardSpeed02Icon,
 } from "@hugeicons/core-free-icons";
 import { TransformTab } from "./tabs/transform-tab";
@@ -30,6 +31,7 @@ import { ClipEffectsTab, StandaloneEffectTab } from "./tabs/effects-tab";
 import { MasksTab } from "./tabs/masks-tab";
 import { SpeedTab } from "./tabs/speed-tab";
 import { GraphicTab } from "./tabs/graphic-tab";
+import { WatermarkTab } from "./tabs/watermark-tab";
 import { OcShapesIcon } from "@/components/icons";
 
 export type TabContentProps = {
@@ -132,6 +134,27 @@ function buildClipEffectsTab({
 	};
 }
 
+function buildWatermarkTab({
+	element,
+	mediaAsset,
+}: {
+	element: VideoElement;
+	mediaAsset: MediaAsset | undefined;
+}): PropertiesTabDef {
+	return {
+		id: "watermark",
+		label: "Watermark",
+		icon: <HugeiconsIcon icon={MagicWand03Icon} size={16} />,
+		content: ({ trackId }) => (
+			<WatermarkTab
+				element={element}
+				mediaAsset={mediaAsset}
+				trackId={trackId}
+			/>
+		),
+	};
+}
+
 function buildTextTab({ element }: { element: TextElement }): PropertiesTabDef {
 	return {
 		id: "text",
@@ -150,7 +173,9 @@ function buildGraphicTab({
 		id: "graphic",
 		label: "Graphic",
 		icon: <OcShapesIcon size={16} />,
-		content: ({ trackId }) => <GraphicTab element={element} trackId={trackId} />,
+		content: ({ trackId }) => (
+			<GraphicTab element={element} trackId={trackId} />
+		),
 	};
 }
 
@@ -193,9 +218,10 @@ function getVideoConfig({
 }): ElementPropertiesConfig {
 	const showAudioTab = mediaAsset?.hasAudio !== false;
 	return {
-		defaultTab: "transform",
+		defaultTab: "watermark",
 		tabs: [
 			buildTransformTab({ element }),
+			buildWatermarkTab({ element, mediaAsset }),
 			...(showAudioTab ? [buildAudioTab({ element })] : []),
 			buildSpeedTab({ element }),
 			buildBlendingTab({ element }),

@@ -111,7 +111,9 @@ export function Timeline() {
 	} = useElementSelection();
 	const editor = useEditor();
 	const timeline = editor.timeline;
-	const scene = useEditor((currentEditor) => currentEditor.scenes.getActiveSceneOrNull());
+	const scene = useEditor((currentEditor) =>
+		currentEditor.scenes.getActiveSceneOrNull(),
+	);
 	const tracks = useMemo<TimelineTrack[]>(
 		() =>
 			scene
@@ -151,8 +153,9 @@ export function Timeline() {
 	);
 
 	const timelineDuration = timeline.getTotalDuration() || 0;
+	const normalizedTimelineDuration = Math.round(timelineDuration);
 	const minZoomLevel = getTimelineZoomMin({
-		duration: timelineDuration,
+		duration: normalizedTimelineDuration,
 		containerWidth: tracksContainerRef.current?.clientWidth,
 	});
 
@@ -168,6 +171,36 @@ export function Timeline() {
 			tracksScrollRef,
 			rulerScrollRef,
 		});
+
+	useEffect(() => {
+		const handleTimelineFitRequested = () => {
+			setZoomLevel({ zoom: minZoomLevel });
+			if (tracksScrollRef.current) {
+				tracksScrollRef.current.scrollLeft = 0;
+			}
+			if (rulerScrollRef.current) {
+				rulerScrollRef.current.scrollLeft = 0;
+			}
+			editor.project.setTimelineViewState({
+				viewState: {
+					zoomLevel: minZoomLevel,
+					scrollLeft: 0,
+					playheadTime: editor.playback.getCurrentTime(),
+				},
+			});
+		};
+
+		window.addEventListener(
+			"timeline-fit-requested",
+			handleTimelineFitRequested,
+		);
+		return () => {
+			window.removeEventListener(
+				"timeline-fit-requested",
+				handleTimelineFitRequested,
+			);
+		};
+	}, [editor, minZoomLevel, rulerScrollRef, setZoomLevel, tracksScrollRef]);
 
 	// Stable refs so the wheel listener never goes stale
 	const setZoomLevelRef = useRef(setZoomLevel);
@@ -347,7 +380,10 @@ export function Timeline() {
 
 	const containerWidth =
 		tracksContainerRef.current?.clientWidth || FALLBACK_CONTAINER_WIDTH;
-	const contentWidth = timelineTimeToPixels({ time: timelineDuration, zoomLevel });
+	const contentWidth = timelineTimeToPixels({
+		time: normalizedTimelineDuration,
+		zoomLevel,
+	});
 	const paddingPx = getTimelinePaddingPx({
 		containerWidth,
 		zoomLevel,
@@ -387,7 +423,7 @@ export function Timeline() {
 		rulerScrollRef,
 		tracksScrollRef,
 		zoomLevel,
-		duration: timeline.getTotalDuration(),
+		duration: normalizedTimelineDuration,
 		isSelecting,
 		clearSelectedElements: clearElementSelection,
 		seek,
@@ -741,8 +777,7 @@ function TimelineTrackRows({
 						<div
 							className={cn(
 								"absolute right-0 left-0 transition-colors",
-								tracksWithSelection.has(track.id) &&
-									SELECTED_TRACK_ROW_CLASS,
+								tracksWithSelection.has(track.id) && SELECTED_TRACK_ROW_CLASS,
 							)}
 							style={{
 								top: `${TIMELINE_CONTENT_TOP_PADDING_PX + getCumulativeHeightBefore({ tracks, trackIndex: index })}px`,

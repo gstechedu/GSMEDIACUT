@@ -6,6 +6,7 @@
 node_modules
 .cursorignore
 .turbo
+.next
 
 .env*
 !*.env.example
@@ -25,3 +26,11 @@ target/
 
 .cargo-tools/
 vendor/
+
+# .NET desktop build output
+**/bin/
+**/obj/
+
+# Local logs
+.tmp-dev.err.log
+.tmp-dev.log

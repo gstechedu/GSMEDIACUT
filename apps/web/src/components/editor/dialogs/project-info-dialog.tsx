@@ -35,11 +35,15 @@ export function ProjectInfoDialog({
 	onOpenChange: (open: boolean) => void;
 	project: TProjectMetadata;
 }) {
-	const durationSeconds = mediaTimeToSeconds({ time: project.duration });
+	const normalizedDuration = Math.round(project.duration);
+	const durationSeconds = mediaTimeToSeconds({ time: normalizedDuration });
 	const durationFormatted =
-		project.duration > 0
-		? (formatTimecode({ time: project.duration, format: durationSeconds >= 3600 ? "HH:MM:SS" : "MM:SS" }) ?? "")
-		: "0:00";
+		normalizedDuration > 0
+			? (formatTimecode({
+					time: normalizedDuration,
+					format: durationSeconds >= 3600 ? "HH:MM:SS" : "MM:SS",
+				}) ?? "")
+			: "0:00";
 
 	return (
 		<Dialog open={isOpen} onOpenChange={onOpenChange}>

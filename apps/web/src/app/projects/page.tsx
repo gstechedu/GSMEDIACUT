@@ -76,9 +76,10 @@ const formatProjectDuration = ({
 		return null;
 	}
 
-	const durationSeconds = mediaTimeToSeconds({ time: duration });
+	const normalizedDuration = Math.round(duration);
+	const durationSeconds = mediaTimeToSeconds({ time: normalizedDuration });
 	const format = durationSeconds >= 3600 ? "HH:MM:SS" : "MM:SS";
-	return formatTimecode({ time: duration, format }) ?? "";
+	return formatTimecode({ time: normalizedDuration, format }) ?? "";
 };
 
 const VIEW_MODE_OPTIONS = [

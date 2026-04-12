@@ -5,11 +5,24 @@ import { formatStorageBytes } from "@/services/storage/quota";
 import { storageService } from "@/services/storage/service";
 import type { MediaAsset } from "@/lib/media/types";
 import { getVideoInfo } from "./mediabunny";
+import { TICKS_PER_SECOND } from "@/lib/wasm";
 
 export interface ProcessedMediaAsset extends Omit<MediaAsset, "id"> {}
 
 const THUMBNAIL_MAX_WIDTH = 1280;
 const THUMBNAIL_MAX_HEIGHT = 720;
+
+const secondsToTicks = ({
+	seconds,
+}: {
+	seconds: number | undefined;
+}): number | undefined => {
+	if (seconds === undefined || !Number.isFinite(seconds)) {
+		return undefined;
+	}
+
+	return Math.max(0, Math.round(seconds * TICKS_PER_SECOND));
+};
 
 const getStorageLimitDescription = ({
 	fileSize,
@@ -221,7 +234,7 @@ export async function processMediaAssets({
 			} else if (fileType === "video") {
 				try {
 					const videoInfo = await getVideoInfo({ videoFile: file });
-					duration = videoInfo.duration;
+					duration = secondsToTicks({ seconds: videoInfo.duration });
 					width = videoInfo.width;
 					height = videoInfo.height;
 					fps = Number.isFinite(videoInfo.fps)
@@ -238,7 +251,9 @@ export async function processMediaAssets({
 				}
 			} else if (fileType === "audio") {
 				// For audio, we don't set width/height/fps (they'll be undefined)
-				duration = await getMediaDuration({ file });
+				duration = secondsToTicks({
+					seconds: await getMediaDuration({ file }),
+				});
 			}
 
 			processedAssets.push({

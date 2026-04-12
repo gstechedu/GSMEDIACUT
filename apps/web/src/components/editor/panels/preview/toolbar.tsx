@@ -69,6 +69,7 @@ function TimecodeDisplay() {
 	const [currentTime, setCurrentTime] = useState(() =>
 		editor.playback.getCurrentTime(),
 	);
+	const normalizedTotalDuration = Math.round(totalDuration);
 
 	useEffect(() => {
 		const handler = (e: Event) =>
@@ -85,7 +86,7 @@ function TimecodeDisplay() {
 		<div className="flex items-center">
 			<EditableTimecode
 				time={currentTime}
-				duration={totalDuration}
+				duration={normalizedTotalDuration}
 				format="HH:MM:SS:FF"
 				fps={fps}
 				onTimeChange={({ time }) => editor.playback.seek({ time })}
@@ -93,7 +94,11 @@ function TimecodeDisplay() {
 			/>
 			<span className="text-muted-foreground px-2 font-mono text-xs">/</span>
 			<span className="text-muted-foreground font-mono text-xs">
-				{formatTimecode({ time: totalDuration, format: "HH:MM:SS:FF", rate: fps })}
+				{formatTimecode({
+					time: normalizedTotalDuration,
+					format: "HH:MM:SS:FF",
+					rate: fps,
+				})}
 			</span>
 		</div>
 	);

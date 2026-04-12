@@ -34,7 +34,7 @@ export function PropertiesPanel() {
 		return (
 			<div className="panel bg-background flex h-full flex-col items-center justify-center overflow-hidden rounded-sm border">
 				<p className="text-muted-foreground text-sm">
-					{selectedElements.length} elements selected.0
+					{selectedElements.length} elements selected.
 				</p>
 			</div>
 		);
@@ -87,9 +87,19 @@ export function PropertiesPanel() {
 					))}
 				</div>
 			</TooltipProvider>
-			<ScrollArea className="flex-1 scrollbar-hidden">
-				{activeTab.content({ trackId: track.id })}
-			</ScrollArea>
+			<div className="flex min-w-0 flex-1 flex-col">
+				<div className="border-b px-4 py-3">
+					<div className="flex items-center gap-2">
+						<span className="text-sm font-semibold">{activeTab.label}</span>
+						<span className="text-muted-foreground truncate text-xs">
+							{"name" in element ? element.name : element.type}
+						</span>
+					</div>
+				</div>
+				<ScrollArea className="flex-1 scrollbar-hidden">
+					{activeTab.content({ trackId: track.id })}
+				</ScrollArea>
+			</div>
 		</div>
 	);
 }
