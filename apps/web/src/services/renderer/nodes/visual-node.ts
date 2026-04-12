@@ -56,10 +56,7 @@ export abstract class VisualNode<
 
 	protected isInRange({ time }: { time: number }): boolean {
 		const localTime = time - this.params.timeOffset;
-		return (
-			localTime >= 0 &&
-			localTime < this.params.duration
-		);
+		return localTime >= 0 && localTime < this.params.duration;
 	}
 
 	protected renderVisual({
@@ -203,6 +200,7 @@ export abstract class VisualNode<
 				effectParams: resolvedParams,
 				width,
 				height,
+				timeSeconds: animationLocalTime,
 			});
 			current = gpuRenderer.applyEffect({
 				source: current,

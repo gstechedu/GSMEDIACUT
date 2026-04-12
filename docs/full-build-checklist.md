@@ -12,10 +12,12 @@ This is the practical feature checklist for turning the current OpenCut-based ap
 - Export UI and renderer entry points
 - Keyframe infrastructure and graph editor
 - Audio waveform rendering foundation
+- Local bundled multilingual font families and script-aware fallback stacks
 
 ## Integrated locally as reference repos
 
 - `vendor/lottie-web`
+- `vendor/khmer-unicode-fonts`
 - `vendor/lottie-react`
 - `vendor/Lottie-Windows`
 - `vendor/gl-transitions`
@@ -23,6 +25,7 @@ This is the practical feature checklist for turning the current OpenCut-based ap
 - `vendor/whisper.cpp`
 - `vendor/ScriptGen`
 - `vendor/PyCaps`
+- `vendor/harfbuzzjs`
 - `vendor/twick`
 - `vendor/WatermarkRemover-AI`
 - `vendor/VeoWatermarkRemover`
@@ -41,6 +44,7 @@ This is the practical feature checklist for turning the current OpenCut-based ap
 - FFmpeg transition rendering integration
 - Filter and adjustment workflows beyond placeholders
 - Real caption motion presets instead of static style presets only
+- Export-grade HarfBuzz text shaping integration
 
 ### Motion and retiming
 

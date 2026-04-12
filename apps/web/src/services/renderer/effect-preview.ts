@@ -18,11 +18,7 @@ class EffectPreviewService {
 		this.loadPreviewImage();
 	}
 
-	onPreviewImageReady({
-		callback,
-	}: {
-		callback: () => void;
-	}): () => void {
+	onPreviewImageReady({ callback }: { callback: () => void }): () => void {
 		this.onReadyCallbacks.add(callback);
 		return () => this.onReadyCallbacks.delete(callback);
 	}
@@ -32,11 +28,13 @@ class EffectPreviewService {
 		params,
 		targetCanvas,
 		uniformDimensions,
+		timeSeconds = 0,
 	}: {
 		effectType: string;
 		params: ParamValues;
 		targetCanvas: HTMLCanvasElement;
 		uniformDimensions?: { width: number; height: number };
+		timeSeconds?: number;
 	}): void {
 		const size = PREVIEW_SIZE;
 		const source = this.getTestSource({ width: size, height: size });
@@ -53,6 +51,7 @@ class EffectPreviewService {
 			effectParams: resolvedParams,
 			width: uniformDimensions?.width ?? size,
 			height: uniformDimensions?.height ?? size,
+			timeSeconds,
 		});
 		const result = this.applyGpuEffect({
 			source,

@@ -4,15 +4,14 @@ import { useCallback, useEffect, useRef } from "react";
 import { usePreviewViewport } from "@/components/editor/panels/preview/preview-viewport";
 import { useEditor } from "@/hooks/use-editor";
 import type { TextElement } from "@/lib/timeline";
-import {
-	FONT_SIZE_SCALE_REFERENCE,
-} from "@/constants/text-constants";
+import { FONT_SIZE_SCALE_REFERENCE } from "@/constants/text-constants";
 import { DEFAULTS } from "@/lib/timeline/defaults";
 import {
 	getMetricAscent,
 	getMetricDescent,
 	setCanvasLetterSpacing,
 } from "@/lib/text/layout";
+import { buildFontFamilyStack } from "@/lib/fonts/local-fonts";
 
 let cachedCanvas: HTMLCanvasElement | null = null;
 
@@ -59,11 +58,13 @@ function measureCSSVisualCenterOffset({
 		const baseline = i * lineHeightPx + halfLeading + fontAscent;
 		visualTop = Math.min(
 			visualTop,
-			baseline - getMetricAscent({ metrics, fallbackFontSize: displayFontSize }),
+			baseline -
+				getMetricAscent({ metrics, fallbackFontSize: displayFontSize }),
 		);
 		visualBottom = Math.max(
 			visualBottom,
-			baseline + getMetricDescent({ metrics, fallbackFontSize: displayFontSize }),
+			baseline +
+				getMetricDescent({ metrics, fallbackFontSize: displayFontSize }),
 		);
 	}
 
@@ -140,7 +141,10 @@ export function TextEditOverlay({
 	const displayLetterSpacing = (element.letterSpacing ?? 0) * displayScaleX;
 	const lineHeightPx = displayFontSize * lineHeight;
 	const lines = (element.content || "").split("\n");
-	const fontString = `${fontStyle} ${fontWeight} ${displayFontSize}px "${element.fontFamily}", sans-serif`;
+	const fontFamily = buildFontFamilyStack({
+		primaryFamily: element.fontFamily,
+	});
+	const fontString = `${fontStyle} ${fontWeight} ${displayFontSize}px ${fontFamily}`;
 
 	const cssVisualCenterOffset = measureCSSVisualCenterOffset({
 		lines,
@@ -186,7 +190,7 @@ export function TextEditOverlay({
 				className="cursor-text select-text outline-none whitespace-pre"
 				style={{
 					fontSize: displayFontSize,
-					fontFamily: element.fontFamily,
+					fontFamily,
 					fontWeight,
 					fontStyle,
 					textAlign: element.textAlign,

@@ -36,18 +36,28 @@ function EffectPreviewCanvas({ effectType }: { effectType: string }) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 
 	useEffect(() => {
-		const render = () => {
+		let animationFrame = 0;
+		let startTime = 0;
+
+		const render = (now = 0) => {
 			if (canvasRef.current) {
+				if (startTime === 0) {
+					startTime = now;
+				}
 				effectPreviewService.renderPreview({
 					effectType,
 					params: {},
 					targetCanvas: canvasRef.current,
+					timeSeconds: (now - startTime) / 1000,
 				});
 			}
+			animationFrame = requestAnimationFrame(render);
 		};
 
 		render();
-		return effectPreviewService.onPreviewImageReady({ callback: render });
+		return () => {
+			cancelAnimationFrame(animationFrame);
+		};
 	}, [effectType]);
 
 	return <canvas ref={canvasRef} className="size-full" />;

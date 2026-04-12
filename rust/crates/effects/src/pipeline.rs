@@ -9,6 +9,16 @@ use crate::{EffectPass, UniformValue};
 
 const GAUSSIAN_BLUR_SHADER_ID: &str = "gaussian-blur";
 const GAUSSIAN_BLUR_SHADER_SOURCE: &str = include_str!("shaders/gaussian_blur.wgsl");
+const PRO_GLITCH_SHADER_ID: &str = "pro-glitch";
+const PRO_GLITCH_SHADER_SOURCE: &str = include_str!("shaders/pro_glitch.wgsl");
+const RGB_SPLIT_SHADER_ID: &str = "rgb-split";
+const RGB_SPLIT_SHADER_SOURCE: &str = include_str!("shaders/rgb_split.wgsl");
+const VHS_SHADER_ID: &str = "vhs";
+const VHS_SHADER_SOURCE: &str = include_str!("shaders/vhs.wgsl");
+const CRT_SHADER_ID: &str = "crt";
+const CRT_SHADER_SOURCE: &str = include_str!("shaders/crt.wgsl");
+const HEAT_WAVE_SHADER_ID: &str = "heat-wave";
+const HEAT_WAVE_SHADER_SOURCE: &str = include_str!("shaders/heat_wave.wgsl");
 
 pub struct ApplyEffectsOptions<'a> {
     pub source: &'a wgpu::Texture,
@@ -84,6 +94,41 @@ impl EffectPipeline {
                     label: Some("effects-gaussian-blur-shader"),
                     source: wgpu::ShaderSource::Wgsl(GAUSSIAN_BLUR_SHADER_SOURCE.into()),
                 });
+        let pro_glitch_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-pro-glitch-shader"),
+                    source: wgpu::ShaderSource::Wgsl(PRO_GLITCH_SHADER_SOURCE.into()),
+                });
+        let rgb_split_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-rgb-split-shader"),
+                    source: wgpu::ShaderSource::Wgsl(RGB_SPLIT_SHADER_SOURCE.into()),
+                });
+        let vhs_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-vhs-shader"),
+                    source: wgpu::ShaderSource::Wgsl(VHS_SHADER_SOURCE.into()),
+                });
+        let crt_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-crt-shader"),
+                    source: wgpu::ShaderSource::Wgsl(CRT_SHADER_SOURCE.into()),
+                });
+        let heat_wave_shader_module =
+            context
+                .device()
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("effects-heat-wave-shader"),
+                    source: wgpu::ShaderSource::Wgsl(HEAT_WAVE_SHADER_SOURCE.into()),
+                });
         let pipeline_layout =
             context
                 .device()
@@ -95,44 +140,56 @@ impl EffectPipeline {
                     ],
                     immediate_size: 0,
                 });
-        let gaussian_blur_pipeline =
-            context
-                .device()
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("effects-gaussian-blur-pipeline"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &vertex_shader_module,
-                        entry_point: Some("vertex_main"),
-                        buffers: &[wgpu::VertexBufferLayout {
-                            array_stride: std::mem::size_of::<[f32; 2]>() as u64,
-                            step_mode: wgpu::VertexStepMode::Vertex,
-                            attributes: &[wgpu::VertexAttribute {
-                                format: wgpu::VertexFormat::Float32x2,
-                                offset: 0,
-                                shader_location: 0,
-                            }],
-                        }],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &gaussian_blur_shader_module,
-                        entry_point: Some("fragment_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: GPU_TEXTURE_FORMAT,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                });
-        let pipelines =
-            HashMap::from([(GAUSSIAN_BLUR_SHADER_ID.to_string(), gaussian_blur_pipeline)]);
+        let gaussian_blur_pipeline = create_effect_render_pipeline(
+            context,
+            &pipeline_layout,
+            &vertex_shader_module,
+            &gaussian_blur_shader_module,
+            "effects-gaussian-blur-pipeline",
+        );
+        let pro_glitch_pipeline = create_effect_render_pipeline(
+            context,
+            &pipeline_layout,
+            &vertex_shader_module,
+            &pro_glitch_shader_module,
+            "effects-pro-glitch-pipeline",
+        );
+        let rgb_split_pipeline = create_effect_render_pipeline(
+            context,
+            &pipeline_layout,
+            &vertex_shader_module,
+            &rgb_split_shader_module,
+            "effects-rgb-split-pipeline",
+        );
+        let vhs_pipeline = create_effect_render_pipeline(
+            context,
+            &pipeline_layout,
+            &vertex_shader_module,
+            &vhs_shader_module,
+            "effects-vhs-pipeline",
+        );
+        let crt_pipeline = create_effect_render_pipeline(
+            context,
+            &pipeline_layout,
+            &vertex_shader_module,
+            &crt_shader_module,
+            "effects-crt-pipeline",
+        );
+        let heat_wave_pipeline = create_effect_render_pipeline(
+            context,
+            &pipeline_layout,
+            &vertex_shader_module,
+            &heat_wave_shader_module,
+            "effects-heat-wave-pipeline",
+        );
+        let pipelines = HashMap::from([
+            (GAUSSIAN_BLUR_SHADER_ID.to_string(), gaussian_blur_pipeline),
+            (PRO_GLITCH_SHADER_ID.to_string(), pro_glitch_pipeline),
+            (RGB_SPLIT_SHADER_ID.to_string(), rgb_split_pipeline),
+            (VHS_SHADER_ID.to_string(), vhs_pipeline),
+            (CRT_SHADER_ID.to_string(), crt_pipeline),
+            (HEAT_WAVE_SHADER_ID.to_string(), heat_wave_pipeline),
+        ]);
 
         Self {
             uniform_bind_group_layout,
@@ -244,16 +301,39 @@ fn pack_effect_uniforms(
     height: u32,
 ) -> Result<EffectUniformBuffer, EffectsError> {
     let shader = pass.shader.as_str();
+    match shader {
+        GAUSSIAN_BLUR_SHADER_ID => pack_gaussian_blur_uniforms(pass, width, height),
+        PRO_GLITCH_SHADER_ID => pack_pro_glitch_uniforms(pass, width, height),
+        RGB_SPLIT_SHADER_ID => pack_rgb_split_uniforms(pass, width, height),
+        VHS_SHADER_ID => pack_vhs_uniforms(pass, width, height),
+        CRT_SHADER_ID => pack_crt_uniforms(pass, width, height),
+        HEAT_WAVE_SHADER_ID => pack_heat_wave_uniforms(pass, width, height),
+        _ => Err(EffectsError::UnknownEffectShader {
+            shader: shader.to_string(),
+        }),
+    }
+}
+
+fn pack_gaussian_blur_uniforms(
+    pass: &EffectPass,
+    width: u32,
+    height: u32,
+) -> Result<EffectUniformBuffer, EffectsError> {
     let sigma = read_number_uniform(pass, "u_sigma")?;
     let step = read_number_uniform(pass, "u_step")?;
     let direction = read_vec2_uniform(pass, "u_direction")?;
+    let time = read_optional_number_uniform(pass, "u_time")?.unwrap_or(0.0);
 
     for uniform in pass.uniforms.keys() {
-        if uniform == "u_sigma" || uniform == "u_step" || uniform == "u_direction" {
+        if uniform == "u_sigma"
+            || uniform == "u_step"
+            || uniform == "u_direction"
+            || uniform == "u_time"
+        {
             continue;
         }
         return Err(EffectsError::UnsupportedUniform {
-            shader: shader.to_string(),
+            shader: pass.shader.clone(),
             uniform: uniform.clone(),
         });
     }
@@ -261,7 +341,147 @@ fn pack_effect_uniforms(
     Ok(EffectUniformBuffer {
         resolution: [width as f32, height as f32],
         direction,
-        scalars: [sigma, step, 0.0, 0.0],
+        scalars: [sigma, step, time, 0.0],
+    })
+}
+
+fn pack_pro_glitch_uniforms(
+    pass: &EffectPass,
+    width: u32,
+    height: u32,
+) -> Result<EffectUniformBuffer, EffectsError> {
+    let amount = read_number_uniform(pass, "u_amount")?;
+    let scanlines = read_number_uniform(pass, "u_scanlines")?;
+    let time = read_optional_number_uniform(pass, "u_time")?.unwrap_or(0.0);
+
+    for uniform in pass.uniforms.keys() {
+        if uniform == "u_amount" || uniform == "u_scanlines" || uniform == "u_time" {
+            continue;
+        }
+        return Err(EffectsError::UnsupportedUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.clone(),
+        });
+    }
+
+    Ok(EffectUniformBuffer {
+        resolution: [width as f32, height as f32],
+        direction: [0.0, 0.0],
+        scalars: [amount, scanlines, time, 0.0],
+    })
+}
+
+fn pack_rgb_split_uniforms(
+    pass: &EffectPass,
+    width: u32,
+    height: u32,
+) -> Result<EffectUniformBuffer, EffectsError> {
+    let amount = read_number_uniform(pass, "u_amount")?;
+    let angle = read_number_uniform(pass, "u_angle")?;
+    let time = read_optional_number_uniform(pass, "u_time")?.unwrap_or(0.0);
+
+    for uniform in pass.uniforms.keys() {
+        if uniform == "u_amount" || uniform == "u_angle" || uniform == "u_time" {
+            continue;
+        }
+        return Err(EffectsError::UnsupportedUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.clone(),
+        });
+    }
+
+    Ok(EffectUniformBuffer {
+        resolution: [width as f32, height as f32],
+        direction: [0.0, 0.0],
+        scalars: [amount, angle, time, 0.0],
+    })
+}
+
+fn pack_vhs_uniforms(
+    pass: &EffectPass,
+    width: u32,
+    height: u32,
+) -> Result<EffectUniformBuffer, EffectsError> {
+    let distortion = read_number_uniform(pass, "u_distortion")?;
+    let noise = read_number_uniform(pass, "u_noise")?;
+    let scanlines = read_number_uniform(pass, "u_scanlines")?;
+    let time = read_optional_number_uniform(pass, "u_time")?.unwrap_or(0.0);
+
+    for uniform in pass.uniforms.keys() {
+        if uniform == "u_distortion"
+            || uniform == "u_noise"
+            || uniform == "u_scanlines"
+            || uniform == "u_time"
+        {
+            continue;
+        }
+        return Err(EffectsError::UnsupportedUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.clone(),
+        });
+    }
+
+    Ok(EffectUniformBuffer {
+        resolution: [width as f32, height as f32],
+        direction: [0.0, 0.0],
+        scalars: [distortion, noise, scanlines, time],
+    })
+}
+
+fn pack_crt_uniforms(
+    pass: &EffectPass,
+    width: u32,
+    height: u32,
+) -> Result<EffectUniformBuffer, EffectsError> {
+    let curvature = read_number_uniform(pass, "u_curvature")?;
+    let vignette = read_number_uniform(pass, "u_vignette")?;
+    let scanlines = read_number_uniform(pass, "u_scanlines")?;
+    let time = read_optional_number_uniform(pass, "u_time")?.unwrap_or(0.0);
+
+    for uniform in pass.uniforms.keys() {
+        if uniform == "u_curvature"
+            || uniform == "u_vignette"
+            || uniform == "u_scanlines"
+            || uniform == "u_time"
+        {
+            continue;
+        }
+        return Err(EffectsError::UnsupportedUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.clone(),
+        });
+    }
+
+    Ok(EffectUniformBuffer {
+        resolution: [width as f32, height as f32],
+        direction: [0.0, 0.0],
+        scalars: [curvature, vignette, scanlines, time],
+    })
+}
+
+fn pack_heat_wave_uniforms(
+    pass: &EffectPass,
+    width: u32,
+    height: u32,
+) -> Result<EffectUniformBuffer, EffectsError> {
+    let amplitude = read_number_uniform(pass, "u_amplitude")?;
+    let frequency = read_number_uniform(pass, "u_frequency")?;
+    let time = read_optional_number_uniform(pass, "u_time")?.unwrap_or(0.0);
+
+    for uniform in pass.uniforms.keys() {
+        if uniform == "u_amplitude" || uniform == "u_frequency" || uniform == "u_time" {
+            continue;
+        }
+        return Err(EffectsError::UnsupportedUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.clone(),
+        });
+    }
+
+    Ok(EffectUniformBuffer {
+        resolution: [width as f32, height as f32],
+        direction: [0.0, 0.0],
+        scalars: [amplitude, frequency, time, 0.0],
     })
 }
 
@@ -279,6 +499,66 @@ fn read_number_uniform(pass: &EffectPass, uniform: &str) -> Result<f32, EffectsE
             uniform: uniform.to_string(),
         }),
     }
+}
+
+fn read_optional_number_uniform(
+    pass: &EffectPass,
+    uniform: &str,
+) -> Result<Option<f32>, EffectsError> {
+    let Some(value) = pass.uniforms.get(uniform) else {
+        return Ok(None);
+    };
+    match value {
+        UniformValue::Number(value) => Ok(Some(*value)),
+        UniformValue::Vector(_) => Err(EffectsError::InvalidNumberUniform {
+            shader: pass.shader.clone(),
+            uniform: uniform.to_string(),
+        }),
+    }
+}
+
+fn create_effect_render_pipeline(
+    context: &GpuContext,
+    pipeline_layout: &wgpu::PipelineLayout,
+    vertex_shader_module: &wgpu::ShaderModule,
+    fragment_shader_module: &wgpu::ShaderModule,
+    label: &'static str,
+) -> wgpu::RenderPipeline {
+    context
+        .device()
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: vertex_shader_module,
+                entry_point: Some("vertex_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<[f32; 2]>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x2,
+                        offset: 0,
+                        shader_location: 0,
+                    }],
+                }],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: fragment_shader_module,
+                entry_point: Some("fragment_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: GPU_TEXTURE_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        })
 }
 
 fn read_vec2_uniform(pass: &EffectPass, uniform: &str) -> Result<[f32; 2], EffectsError> {

@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactElement } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { GUIDE_REGISTRY, getGuideById } from "@/lib/guides";
 import { usePreviewStore } from "@/stores/preview-store";
@@ -12,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/utils/ui";
 
-export function GridPopover({ children }: { children: React.ReactNode }) {
+export function GridPopover({ children }: { children: ReactElement }) {
 	const activeGuide = usePreviewStore((state) => state.activeGuide);
 	const toggleGuide = usePreviewStore((state) => state.toggleGuide);
 	const activeGuideDef = getGuideById(activeGuide);
@@ -20,7 +21,7 @@ export function GridPopover({ children }: { children: React.ReactNode }) {
 
 	return (
 		<Popover>
-			<PopoverTrigger>{children}</PopoverTrigger>
+			<PopoverTrigger asChild>{children}</PopoverTrigger>
 			<PopoverContent sideOffset={8} className="w-60 px-0">
 				<div className="flex flex-col gap-2 px-4">
 					<Label>Guides</Label>

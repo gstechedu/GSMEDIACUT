@@ -271,6 +271,7 @@ export class TextNode extends BaseNode<TextNodeParams> {
 				effectParams: resolvedParams,
 				width: renderer.width,
 				height: renderer.height,
+				timeSeconds: localTime,
 			});
 			currentSource = gpuRenderer.applyEffect({
 				source: currentSource,

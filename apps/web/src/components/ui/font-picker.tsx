@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect, useCallback, type CSSProperties } from "react";
+import {
+	useState,
+	useMemo,
+	useRef,
+	useEffect,
+	useCallback,
+	type CSSProperties,
+} from "react";
 import { List, type RowComponentProps } from "react-window";
 import {
 	Popover,
@@ -10,13 +17,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { loadFullFont } from "@/lib/fonts/google-fonts";
-import { SYSTEM_FONTS } from "@/constants/font-constants";
+import { LOCAL_FONT_FAMILIES } from "@/constants/font-constants";
 import type { FontAtlas, FontAtlasEntry } from "@/lib/fonts/types";
 import { useFontAtlas } from "@/hooks/use-font-atlas";
 import { cn } from "@/utils/ui";
 import { ChevronDown, Search } from "lucide-react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { TextIcon } from "@hugeicons/core-free-icons";
+import { buildFontFamilyStack } from "@/lib/fonts/local-fonts";
 
 const FONT_TABS = [
 	{ key: "all", label: "All fonts" },
@@ -47,7 +55,12 @@ export function FontPicker({
 	const [search, setSearch] = useState("");
 	const [activeTab, setActiveTab] = useState<FontTab>("all");
 	const searchInputRef = useRef<HTMLInputElement>(null);
-	const { atlas, status, fontNames, retry: handleRetry } = useFontAtlas({ open });
+	const {
+		atlas,
+		status,
+		fontNames,
+		retry: handleRetry,
+	} = useFontAtlas({ open });
 
 	const filteredFonts = useMemo(() => {
 		if (!search) return fontNames;
@@ -62,7 +75,7 @@ export function FontPicker({
 
 	const handleSelect = useCallback(
 		async ({ family }: { family: string }) => {
-			if (!SYSTEM_FONTS.has(family)) {
+			if (!LOCAL_FONT_FAMILIES.has(family)) {
 				try {
 					await loadFullFont({ family });
 				} catch {
@@ -225,7 +238,7 @@ function FontRow({
 	const fontName = filteredFonts[index];
 	const entry = atlas.fonts[fontName];
 	const isSelected = fontName === selectedFont;
-	const isSystemFont = SYSTEM_FONTS.has(fontName);
+	const isLocalFont = LOCAL_FONT_FAMILIES.has(fontName);
 
 	return (
 		<button
@@ -245,8 +258,13 @@ function FontRow({
 			aria-label={fontName}
 		>
 			<div className="min-w-0 overflow-hidden">
-				{isSystemFont ? (
-					<span className="text-xl text-foreground/85" style={{ fontFamily: fontName }}>
+				{isLocalFont ? (
+					<span
+						className="text-xl text-foreground/85"
+						style={{
+							fontFamily: buildFontFamilyStack({ primaryFamily: fontName }),
+						}}
+					>
 						{fontName}
 					</span>
 				) : (

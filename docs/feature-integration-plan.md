@@ -50,6 +50,20 @@ This repo now uses OpenCut as the base editor. The external repositories below a
   - `apps/web/src/components/editor/panels/assets/views/text.tsx`
   - future caption preset theme files
 
+### Khmer and multilingual font sources
+
+- Repos:
+  - `vendor/khmer-unicode-fonts`
+  - local `@fontsource` Noto packages in `apps/web/package.json`
+- Use for:
+  - Khmer OS font references
+  - local bundled multilingual fonts for offline editing
+- OpenCut integration points:
+  - `apps/web/src/app/layout.tsx`
+  - `apps/web/src/constants/font-constants.ts`
+  - `apps/web/src/components/ui/font-picker.tsx`
+  - `apps/web/src/lib/fonts/`
+
 ### Animated stickers
 
 - Repos:
@@ -154,6 +168,16 @@ This repo now uses OpenCut as the base editor. The external repositories below a
   - `apps/web/src/lib/transcription/`
   - `apps/web/src/services/transcription/`
   - `apps/desktop/` for native bindings or process execution
+
+### Text shaping
+
+- Repo: `vendor/harfbuzzjs`
+- Package: `harfbuzzjs` in `apps/web`
+- Use for:
+  - future shaping engine integration for export-grade Khmer and other complex scripts
+- Current status:
+  - browser-native text shaping plus bundled script-aware fallback fonts are now the active path
+  - dedicated HarfBuzz pipeline is not yet wired into export rendering
 
 ### UI panel ideas
 

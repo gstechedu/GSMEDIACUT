@@ -5,7 +5,7 @@ import {
 	clearFontAtlasCache,
 } from "@/lib/fonts/google-fonts";
 import type { FontAtlas } from "@/lib/fonts/types";
-import { SYSTEM_FONTS } from "@/constants/font-constants";
+import { LOCAL_FONT_FAMILIES } from "@/constants/font-constants";
 
 type Status = "idle" | "loading" | "error";
 
@@ -46,7 +46,7 @@ export function useFontAtlas({ open }: { open: boolean }) {
 
 	const fontNames = useMemo(() => {
 		if (!atlas) return [];
-		return [...Object.keys(atlas.fonts), ...SYSTEM_FONTS].sort();
+		return [...Object.keys(atlas.fonts), ...LOCAL_FONT_FAMILIES].sort();
 	}, [atlas]);
 
 	return { atlas, status, fontNames, retry };

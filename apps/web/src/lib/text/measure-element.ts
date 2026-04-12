@@ -5,6 +5,7 @@ import {
 import { resolveNumberAtTime } from "@/lib/animation";
 import { DEFAULTS } from "@/lib/timeline/defaults";
 import type { TextBackground, TextElement } from "@/lib/timeline";
+import { buildFontFamilyStack } from "@/lib/fonts/local-fonts";
 import {
 	measureTextBlock,
 	setCanvasLetterSpacing,
@@ -54,8 +55,10 @@ export function measureTextElement({
 		element.fontSize * (canvasHeight / FONT_SIZE_SCALE_REFERENCE);
 	const fontWeight = element.fontWeight === "bold" ? "bold" : "normal";
 	const fontStyle = element.fontStyle === "italic" ? "italic" : "normal";
-	const fontFamily = `"${element.fontFamily.replace(/"/g, '\\"')}"`;
-	const fontString = `${fontStyle} ${fontWeight} ${scaledFontSize}px ${fontFamily}, sans-serif`;
+	const fontFamily = buildFontFamilyStack({
+		primaryFamily: element.fontFamily,
+	});
+	const fontString = `${fontStyle} ${fontWeight} ${scaledFontSize}px ${fontFamily}`;
 	const letterSpacing = element.letterSpacing ?? 0;
 	const lineHeightPx =
 		scaledFontSize * (element.lineHeight ?? DEFAULTS.text.lineHeight);

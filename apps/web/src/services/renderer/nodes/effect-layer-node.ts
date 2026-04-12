@@ -56,6 +56,7 @@ export class EffectLayerNode extends BaseNode<EffectLayerNodeParams> {
 			effectParams: this.params.effectParams,
 			width: renderer.width,
 			height: renderer.height,
+			timeSeconds: Math.max(0, time - this.params.timeOffset),
 		});
 		if (passes.length === 0) {
 			return;

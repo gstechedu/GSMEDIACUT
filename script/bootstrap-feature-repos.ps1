@@ -13,6 +13,10 @@ $repos = @(
     Url = "https://github.com/airbnb/lottie-web"
   },
   @{
+    Name = "khmer-unicode-fonts"
+    Url = "https://github.com/KhmerSoftwareInitiative/khmer-unicode-fonts"
+  },
+  @{
     Name = "lottie-react"
     Url = "https://github.com/LottieFiles/lottie-react"
   },
@@ -55,6 +59,10 @@ $repos = @(
   @{
     Name = "PyCaps"
     Url = "https://github.com/francozanardi/pycaps"
+  },
+  @{
+    Name = "harfbuzzjs"
+    Url = "https://github.com/harfbuzz/harfbuzzjs"
   },
   @{
     Name = "ScriptGen"

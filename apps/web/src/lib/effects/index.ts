@@ -13,18 +13,36 @@ export function resolveEffectPasses({
 	effectParams,
 	width,
 	height,
+	timeSeconds = 0,
 }: {
 	definition: EffectDefinition;
 	effectParams: ParamValues;
 	width: number;
 	height: number;
+	timeSeconds?: number;
 }): EffectPass[] {
 	if (definition.renderer.buildPasses) {
-		return definition.renderer.buildPasses({ effectParams, width, height });
+		return definition.renderer
+			.buildPasses({
+				effectParams,
+				width,
+				height,
+				timeSeconds,
+			})
+			.map((pass) => ({
+				...pass,
+				uniforms: {
+					...pass.uniforms,
+					u_time: timeSeconds,
+				},
+			}));
 	}
 	return definition.renderer.passes.map((pass) => ({
 		shader: pass.shader,
-		uniforms: pass.uniforms({ effectParams, width, height }),
+		uniforms: {
+			...pass.uniforms({ effectParams, width, height, timeSeconds }),
+			u_time: timeSeconds,
+		},
 	}));
 }
 
