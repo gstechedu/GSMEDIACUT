@@ -8,7 +8,7 @@ ENV TORCH_HOME=/root/.cache/torch
 ENV XDG_CACHE_HOME=/root/.cache
 ENV WATERMARK_REMOVER_REPO=https://github.com/D-Ogi/WatermarkRemover-AI
 ENV WATERMARK_REMOVER_REF=2a15d4d51a483a9fdc8437ec52b1146319d9bda9
-ENV FORCE_REBUILD=florence2-v6
+ENV FORCE_REBUILD=florence2-v7
 ENV PRELOAD_LAMA_MODEL=0
 
 WORKDIR /app
@@ -81,16 +81,14 @@ from transformers import AutoModelForCausalLM, AutoProcessor
 print("Transformers Florence import OK via AutoModelForCausalLM")
 PY
 
-RUN if [ "$PRELOAD_LAMA_MODEL" = "1" ]; then python3 - <<'PY'; \
-import huggingface_hub
-
-if not hasattr(huggingface_hub, "cached_download"):
-    huggingface_hub.cached_download = huggingface_hub.hf_hub_download
-
-from iopaint.download import cli_download_model
-
-cli_download_model("lama")
-PY \
-; else echo "Skipping LaMa predownload during build"; fi
+RUN if [ "$PRELOAD_LAMA_MODEL" = "1" ]; then \
+    python3 -c "import huggingface_hub; \
+if not hasattr(huggingface_hub, 'cached_download'): \
+    huggingface_hub.cached_download = huggingface_hub.hf_hub_download; \
+from iopaint.download import cli_download_model; \
+cli_download_model('lama')"; \
+    else \
+    echo "Skipping LaMa predownload during build"; \
+    fi
 
 CMD ["python3", "/app/runpod/watermark-worker/handler.py"]
