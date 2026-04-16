@@ -34,3 +34,7 @@ vendor/
 # Local logs
 .tmp-dev.err.log
 .tmp-dev.log
+
+# Python cache
+__pycache__/
+*.pyc
