@@ -14,6 +14,63 @@ WORKER_ROOT = APP_ROOT / "runpod" / "watermark-worker"
 VENDOR_ROOT = APP_ROOT / "vendor" / "WatermarkRemover-AI"
 SCRIPT_PATH = VENDOR_ROOT / "remwm.py"
 
+IMPORT_PATCHES = (
+    (
+        "from transformers import AutoProcessor, Florence2ForConditionalGeneration",
+        "import transformers\nfrom transformers import AutoProcessor",
+    ),
+    (
+        "from transformers import AutoModelForCausalLM, AutoProcessor",
+        "import transformers\nfrom transformers import AutoProcessor",
+    ),
+    (
+        "def identify(task_prompt: TaskType, image: MatLike, text_input: str, model: Florence2ForConditionalGeneration, processor: AutoProcessor, device: str):",
+        "def identify(task_prompt: TaskType, image: MatLike, text_input: str, model: Module, processor: AutoProcessor, device: str):",
+    ),
+    (
+        'def get_watermark_mask(image: MatLike, model: Florence2ForConditionalGeneration, processor: AutoProcessor, device: str, max_bbox_percent: float, detection_prompt: str = "watermark"):',
+        'def get_watermark_mask(image: MatLike, model: Module, processor: AutoProcessor, device: str, max_bbox_percent: float, detection_prompt: str = "watermark"):',
+    ),
+    (
+        'def detect_only(image: MatLike, model: Florence2ForConditionalGeneration, processor: AutoProcessor, device: str, max_bbox_percent: float, detection_prompt: str = "watermark"):',
+        'def detect_only(image: MatLike, model: Module, processor: AutoProcessor, device: str, max_bbox_percent: float, detection_prompt: str = "watermark"):',
+    ),
+    (
+        'try:\n    from cv2.typing import MatLike\nexcept ImportError:\n    MatLike = np.ndarray',
+        'try:\n    from cv2.typing import MatLike\nexcept ImportError:\n    MatLike = np.ndarray\n\n\ndef load_florence_model(device: str):\n    model_id = "florence-community/Florence-2-large"\n    model_dtype = torch.float32 if device == "cpu" else None\n    base_kwargs = {"trust_remote_code": True}\n    if model_dtype is not None:\n        base_kwargs["dtype"] = model_dtype\n\n    florence_cls = getattr(transformers, "Florence2ForConditionalGeneration", None)\n    if florence_cls is not None:\n        return florence_cls.from_pretrained(model_id, **base_kwargs).to(device).eval()\n\n    fallback_cls = getattr(transformers, "AutoModelForCausalLM", None)\n    if fallback_cls is None:\n        raise ImportError(\n            "transformers does not provide Florence2ForConditionalGeneration "\n            "or AutoModelForCausalLM."\n        )\n\n    try:\n        return fallback_cls.from_pretrained(model_id, **base_kwargs).to(device).eval()\n    except TypeError:\n        legacy_kwargs = {"trust_remote_code": True}\n        if model_dtype is not None:\n            legacy_kwargs["torch_dtype"] = model_dtype\n        return fallback_cls.from_pretrained(model_id, **legacy_kwargs).to(device).eval()',
+    ),
+    (
+        '        # Force no dtype for CUDA (intentional default)\n        # Apply float32 for CPU (compatibility)\n        model_dtype = torch.float32 if device == "cpu" else None\n\n        florence_model = Florence2ForConditionalGeneration.from_pretrained(\n            "florence-community/Florence-2-large",\n            torch_dtype=model_dtype).to(device).eval()',
+        '        florence_model = load_florence_model(device)',
+    ),
+    (
+        '    # Force no dtype for CUDA (intentional default)\n    # Apply float32 for CPU (compatibility)\n    model_dtype = torch.float32 if device == "cpu" else None\n\n    florence_model = Florence2ForConditionalGeneration.from_pretrained(\n        "florence-community/Florence-2-large",\n        torch_dtype=model_dtype).to(device).eval()',
+        '    florence_model = load_florence_model(device)',
+    ),
+    (
+        '        # Force no dtype for CUDA (intentional default)\n        # Apply float32 for CPU (compatibility)\n        model_dtype = torch.float32 if device == "cpu" else None\n\n        florence_model = AutoModelForCausalLM.from_pretrained(\n            "florence-community/Florence-2-large",\n            trust_remote_code=True,\n            torch_dtype=model_dtype).to(device).eval()',
+        '        florence_model = load_florence_model(device)',
+    ),
+    (
+        '    # Force no dtype for CUDA (intentional default)\n    # Apply float32 for CPU (compatibility)\n    model_dtype = torch.float32 if device == "cpu" else None\n\n    florence_model = AutoModelForCausalLM.from_pretrained(\n        "florence-community/Florence-2-large",\n        trust_remote_code=True,\n        torch_dtype=model_dtype).to(device).eval()',
+        '    florence_model = load_florence_model(device)',
+    ),
+)
+
+
+def patch_worker_script():
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    patched = source
+    changed = False
+
+    for old, new in IMPORT_PATCHES:
+        if old in patched:
+            patched = patched.replace(old, new)
+            changed = True
+
+    if changed:
+        SCRIPT_PATH.write_text(patched, encoding="utf-8")
+
 
 def ensure_worker_files():
     if not SCRIPT_PATH.exists():
@@ -21,6 +78,7 @@ def ensure_worker_files():
             f"Missing WatermarkRemover-AI script at {SCRIPT_PATH}. "
             "Make sure the repo was built with the vendor folder included."
         )
+    patch_worker_script()
 
 
 def build_env(temp_dir: Path):

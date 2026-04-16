@@ -8,8 +8,9 @@ Keep this folder in the same repository as:
 
 - `runpod/watermark-worker`
 
-The Dockerfile clones `D-Ogi/WatermarkRemover-AI` during the Runpod build, so you do not need to commit the `vendor/WatermarkRemover-AI` folder to GitHub.
-It also pre-downloads the LaMa inpainting model during the image build so the first job does not spend several minutes downloading weights at runtime.
+The Dockerfile fetches only the pinned `D-Ogi/WatermarkRemover-AI` revision needed for the worker during the Runpod build, so you do not need to commit the `vendor/WatermarkRemover-AI` folder to GitHub.
+After `iopaint` is installed, the Dockerfile uninstalls any conflicting copies of `transformers` and `huggingface_hub`, reinstalls exact pinned versions, and runs a build-time import check for `Florence2ForConditionalGeneration`.
+By default the Docker image skips pre-downloading the LaMa inpainting model to keep Runpod builds faster. The first worker invocation may download LaMa once at runtime. Set `PRELOAD_LAMA_MODEL=1` in the Docker build environment if you want slower builds but faster cold starts.
 
 ## Runpod deployment
 

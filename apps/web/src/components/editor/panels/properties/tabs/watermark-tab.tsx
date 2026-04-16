@@ -29,7 +29,11 @@ type PresetKey = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 type WatermarkEngine = "fast" | "ai" | "veo";
 type EngineAvailability = {
 	fast: { available: boolean };
-	ai: { available: boolean; remote?: boolean };
+	ai: {
+		available: boolean;
+		remote?: boolean;
+		transport?: "r2" | "server-url" | "inline";
+	};
 	veo: { available: boolean; reason?: string | null };
 };
 
@@ -216,6 +220,7 @@ export function WatermarkTab({
 
 	const veoAvailable = engineAvailability?.veo.available ?? false;
 	const aiUsesRunpod = engineAvailability?.ai.remote ?? false;
+	const aiTransportMode = engineAvailability?.ai.transport ?? "inline";
 
 	const insertTrackIndex = useMemo(() => {
 		if (!activeScene) {
@@ -273,12 +278,51 @@ export function WatermarkTab({
 		};
 	}, [aiUsesRunpod, engine, isProcessing, processingPhase]);
 
+	useEffect(() => {
+		if (!isProcessing || engine !== "ai" || !aiUsesRunpod) {
+			return;
+		}
+
+		if (processingPhase !== "uploading") {
+			return;
+		}
+
+		const queuedTimer = window.setTimeout(() => {
+			setProcessingPhase((current) =>
+				current === "uploading" ? "queued" : current,
+			);
+		}, 2500);
+
+		const processingTimer = window.setTimeout(() => {
+			setProcessingPhase((current) => {
+				if (current === "uploading" || current === "queued") {
+					return "processing";
+				}
+				return current;
+			});
+		}, 6000);
+
+		return () => {
+			window.clearTimeout(queuedTimer);
+			window.clearTimeout(processingTimer);
+		};
+	}, [aiUsesRunpod, engine, isProcessing, processingPhase]);
+
 	const phaseLabel = useMemo(() => {
 		switch (processingPhase) {
 			case "preparing":
 				return "Preparing clip";
 			case "uploading":
-				return aiUsesRunpod ? "Uploading source" : "Preparing local job";
+				if (!aiUsesRunpod) {
+					return "Preparing local job";
+				}
+				if (aiTransportMode === "r2") {
+					return "Uploading to R2";
+				}
+				if (aiTransportMode === "server-url") {
+					return "Uploading to server";
+				}
+				return "Sending clip to Runpod";
 			case "queued":
 				return "Queued on Runpod";
 			case "processing":
@@ -294,16 +338,23 @@ export function WatermarkTab({
 			default:
 				return null;
 		}
-	}, [aiUsesRunpod, engine, processingPhase]);
+	}, [aiTransportMode, aiUsesRunpod, engine, processingPhase]);
 
 	const phaseDescription = useMemo(() => {
 		switch (processingPhase) {
 			case "preparing":
 				return "Checking the selected clip and building the processing request.";
 			case "uploading":
-				return aiUsesRunpod
-					? "Sending the source clip to temporary cloud storage for Runpod."
-					: "Starting the local watermark cleanup pipeline.";
+				if (!aiUsesRunpod) {
+					return "Starting the local watermark cleanup pipeline.";
+				}
+				if (aiTransportMode === "r2") {
+					return "Sending the source clip to Cloudflare R2 so Runpod can download it.";
+				}
+				if (aiTransportMode === "server-url") {
+					return "Sending the source clip to your server so Runpod can download it.";
+				}
+				return "Sending the clip directly to Runpod in the request body.";
 			case "queued":
 				return "Waiting for an available worker to pick up the AI job.";
 			case "processing":
@@ -319,7 +370,7 @@ export function WatermarkTab({
 			default:
 				return null;
 		}
-	}, [aiUsesRunpod, engine, processingPhase]);
+	}, [aiTransportMode, aiUsesRunpod, engine, processingPhase]);
 
 	const handleProcess = async () => {
 		if (!activeProject || !mediaAsset?.file) {
@@ -353,7 +404,7 @@ export function WatermarkTab({
 				formData.append("height", safeRegion.height.toString());
 			} else if (engine === "ai") {
 				formData.append("detectionPrompt", detectionPrompt);
-				formData.append("detectionSkip", detectionSkip);
+				formData.append("detectionSkip", aiUsesRunpod ? "10" : detectionSkip);
 				formData.append("fadeIn", fadeIn);
 				formData.append("fadeOut", fadeOut);
 			}
@@ -461,7 +512,7 @@ export function WatermarkTab({
 					"A cleaned clip was added above the original. The original clip was hidden and muted so the result is visible immediately.",
 			});
 			if (engine === "ai" && aiMode === "local-fallback" && aiModeReason) {
-				toast.info("Runpod upload limit reached", {
+				toast.info("AI fell back to local processing", {
 					description: aiModeReason,
 				});
 			}

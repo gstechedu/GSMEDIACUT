@@ -76,11 +76,21 @@ async function resolveVeoExecutable() {
 
 export async function GET() {
 	const executablePath = await resolveVeoExecutable();
+	const publicBaseUrl = getPublicBaseUrl();
+	const aiTransport = hasR2Config()
+		? "r2"
+		: publicBaseUrl
+			? "server-url"
+			: "inline";
 
 	return NextResponse.json({
 		engines: {
 			fast: { available: true },
-			ai: { available: true, remote: hasRunpodConfig() },
+			ai: {
+				available: true,
+				remote: hasRunpodConfig(),
+				transport: aiTransport,
+			},
 			veo: {
 				available: Boolean(executablePath),
 				reason: executablePath
@@ -267,6 +277,39 @@ function isRemoteAiMode(aiMode: string) {
 	return (
 		aiMode === "runpod" || aiMode === "runpod-r2" || aiMode === "runpod-url"
 	);
+}
+
+function shouldFallbackToLocalAi(error: unknown) {
+	if (!(error instanceof Error)) {
+		return false;
+	}
+
+	const message = error.message;
+	return (
+		message === "RUNPOD_BODY_LIMIT_EXCEEDED" ||
+		message.includes("Florence2ForConditionalGeneration") ||
+		(message.includes("cannot import name") &&
+			message.includes("transformers")) ||
+		message.includes(
+			"from transformers import AutoProcessor, Florence2ForConditionalGeneration",
+		)
+	);
+}
+
+function getLocalAiFallbackReason(error: Error) {
+	if (error.message === "RUNPOD_BODY_LIMIT_EXCEEDED") {
+		return "Runpod rejected the inline upload size, so AI fell back to local processing.";
+	}
+
+	if (
+		error.message.includes("Florence2ForConditionalGeneration") ||
+		(error.message.includes("cannot import name") &&
+			error.message.includes("transformers"))
+	) {
+		return "Runpod worker is using an incompatible transformers build, so AI fell back to local processing.";
+	}
+
+	return "Runpod failed, so AI fell back to local processing.";
 }
 
 async function createRunpodSourceUpload({
@@ -614,13 +657,9 @@ export async function POST(request: Request) {
 						await fs.writeFile(outputPath, runpodBuffer);
 					}
 				} catch (error) {
-					if (
-						error instanceof Error &&
-						error.message === "RUNPOD_BODY_LIMIT_EXCEEDED"
-					) {
+					if (shouldFallbackToLocalAi(error)) {
 						aiMode = "local-fallback";
-						aiModeReason =
-							"Runpod rejected the inline upload size, so AI fell back to local processing.";
+						aiModeReason = getLocalAiFallbackReason(error);
 					} else {
 						throw error;
 					}
