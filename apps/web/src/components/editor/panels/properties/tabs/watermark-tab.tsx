@@ -181,10 +181,14 @@ export function WatermarkTab({
 			formData.append("file", mediaAsset.file, mediaAsset.file.name);
 			formData.append("engine", engine);
 			if (engine === "fast") {
-				formData.append("x", regionSummary.x.toString());
-				formData.append("y", regionSummary.y.toString());
-				formData.append("width", regionSummary.width.toString());
-				formData.append("height", regionSummary.height.toString());
+				const safeRegion = regionSummary;
+				if (!safeRegion) {
+					throw new Error("Missing watermark region");
+				}
+				formData.append("x", safeRegion.x.toString());
+				formData.append("y", safeRegion.y.toString());
+				formData.append("width", safeRegion.width.toString());
+				formData.append("height", safeRegion.height.toString());
 			} else if (engine === "ai") {
 				formData.append("detectionPrompt", detectionPrompt);
 				formData.append("detectionSkip", detectionSkip);
@@ -241,9 +245,19 @@ export function WatermarkTab({
 				element: cleanedElement,
 				placement: { mode: "explicit", trackId: insertTrackId },
 			});
-			editor.selection.setSelectedElements({
-				elements: [{ trackId: insertTrackId, elementId: cleanedElement.id }],
-			});
+			const insertedElement = editor.timeline
+				.getTrackById({ trackId: insertTrackId })
+				?.elements.find(
+					(trackElement) =>
+						trackElement.type === "video" &&
+						"mediaId" in trackElement &&
+						trackElement.mediaId === createdAsset.id,
+				);
+			if (insertedElement) {
+				editor.selection.setSelectedElements({
+					elements: [{ trackId: insertTrackId, elementId: insertedElement.id }],
+				});
+			}
 			setLastOutputName(createdAsset.name);
 
 			toast.success("Watermark cleanup finished", {
@@ -432,9 +446,10 @@ export function WatermarkTab({
 					</div>
 				) : engine === "ai" ? (
 					<div className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
-						AI mode uses {detectionPrompt || "watermark"} detection. This PC is
-						currently running the model on CPU, so it will be slow. Faster
-						defaults are now set to skip more frames and disable fade expansion.
+						AI mode uses {detectionPrompt || "watermark"} detection. If Runpod
+						is configured, this will run remotely on your endpoint. Otherwise it
+						falls back to local CPU processing, which is much slower. Faster
+						defaults are set to skip more frames and disable fade expansion.
 					</div>
 				) : (
 					<div className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
