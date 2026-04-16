@@ -4,6 +4,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
+ENV TORCH_HOME=/root/.cache/torch
+ENV XDG_CACHE_HOME=/root/.cache
 ENV WATERMARK_REMOVER_REPO=https://github.com/D-Ogi/WatermarkRemover-AI
 ENV WATERMARK_REMOVER_REF=2a15d4d51a483a9fdc8437ec52b1146319d9bda9
 
@@ -26,12 +28,14 @@ COPY runpod/watermark-worker/requirements.txt /tmp/requirements.txt
 
 RUN python3 -m pip install --upgrade pip setuptools wheel && \
     python3 -m pip install -r /tmp/requirements.txt && \
-    python3 -m pip install --no-deps iopaint
+    python3 -m pip install iopaint
 
 COPY runpod/watermark-worker /app/runpod/watermark-worker
 
 RUN git clone ${WATERMARK_REMOVER_REPO} /app/vendor/WatermarkRemover-AI && \
     cd /app/vendor/WatermarkRemover-AI && \
     git checkout ${WATERMARK_REMOVER_REF}
+
+RUN python3 -m iopaint download --model lama
 
 CMD ["python3", "/app/runpod/watermark-worker/handler.py"]

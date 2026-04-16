@@ -60,6 +60,7 @@ export async function submitRunpodJob({ input, webhook }: RunpodJobRequest) {
 		delayTime?: number;
 		executionTime?: number;
 		output?: unknown;
+		error?: string;
 	}>({
 		path: "/run",
 		method: "POST",

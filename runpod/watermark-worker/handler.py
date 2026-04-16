@@ -4,7 +4,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import runpod
 
@@ -70,6 +70,27 @@ def write_input_file(job_input: dict, temp_dir: Path):
     raise ValueError("Expected fileBase64 or sourceUrl in Runpod input.")
 
 
+def upload_result_if_requested(job_input: dict, output_bytes: bytes):
+    result_upload_url = job_input.get("resultUploadUrl")
+    if not isinstance(result_upload_url, str) or not result_upload_url:
+        return None
+
+    request = Request(
+        result_upload_url,
+        data=output_bytes,
+        method="PUT",
+        headers={"Content-Type": "video/mp4"},
+    )
+    with urlopen(request) as response:
+        response.read()
+
+    return {
+        "resultStored": True,
+        "resultMode": "signed-upload",
+        "mimeType": "video/mp4",
+    }
+
+
 def run_watermark_remover(job_input: dict):
     ensure_worker_files()
 
@@ -120,6 +141,15 @@ def run_watermark_remover(job_input: dict):
 
         output_bytes = output_path.read_bytes()
         output_name = f"{Path(filename_or_default(job_input)).stem}_cleaned.mp4"
+        uploaded_result = upload_result_if_requested(job_input, output_bytes)
+
+        if uploaded_result:
+            return {
+                "filename": output_name,
+                "engine": "watermarkremover-ai",
+                "logs": process.stdout[-4000:],
+                **uploaded_result,
+            }
 
         return {
             "videoBase64": base64.b64encode(output_bytes).decode("utf-8"),

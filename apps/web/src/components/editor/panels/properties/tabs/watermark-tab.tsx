@@ -27,6 +27,11 @@ import type { VideoElement } from "@/lib/timeline";
 
 type PresetKey = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 type WatermarkEngine = "fast" | "ai" | "veo";
+type EngineAvailability = {
+	fast: { available: boolean };
+	ai: { available: boolean; remote?: boolean };
+	veo: { available: boolean; reason?: string | null };
+};
 
 const PRESETS: Array<{ id: PresetKey; label: string }> = [
 	{ id: "top-left", label: "Top left" },
@@ -108,11 +113,14 @@ export function WatermarkTab({
 	const [width, setWidth] = useState("0");
 	const [height, setHeight] = useState("0");
 	const [detectionPrompt, setDetectionPrompt] = useState("watermark");
-	const [detectionSkip, setDetectionSkip] = useState("6");
+	const [detectionSkip, setDetectionSkip] = useState("8");
 	const [fadeIn, setFadeIn] = useState("0.0");
 	const [fadeOut, setFadeOut] = useState("0.0");
 	const [isProcessing, setIsProcessing] = useState(false);
+	const [progressPercent, setProgressPercent] = useState(0);
 	const [lastOutputName, setLastOutputName] = useState<string | null>(null);
+	const [engineAvailability, setEngineAvailability] =
+		useState<EngineAvailability | null>(null);
 
 	const sourceWidth = mediaAsset?.width ?? 0;
 	const sourceHeight = mediaAsset?.height ?? 0;
@@ -135,6 +143,38 @@ export function WatermarkTab({
 		setWidth(defaults.width.toString());
 		setHeight(defaults.height.toString());
 	}, [hasProcessableAsset, preset, sourceHeight, sourceWidth]);
+
+	useEffect(() => {
+		let cancelled = false;
+
+		void fetch("/api/watermark/run", { method: "GET" })
+			.then(async (response) => {
+				if (!response.ok) {
+					throw new Error("Failed to load watermark engine status");
+				}
+				return response.json();
+			})
+			.then((data) => {
+				if (cancelled) {
+					return;
+				}
+				setEngineAvailability(data.engines as EngineAvailability);
+				setEngine((currentEngine) =>
+					currentEngine === "veo" && !data.engines?.veo?.available
+						? "ai"
+						: currentEngine,
+				);
+			})
+			.catch(() => {
+				if (!cancelled) {
+					setEngineAvailability(null);
+				}
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	const regionSummary = useMemo(() => {
 		const nextX = parseInput(x);
@@ -161,6 +201,38 @@ export function WatermarkTab({
 		};
 	}, [height, sourceHeight, sourceWidth, width, x, y]);
 
+	const veoAvailable = engineAvailability?.veo.available ?? false;
+	const aiUsesRunpod = engineAvailability?.ai.remote ?? false;
+
+	useEffect(() => {
+		if (!isProcessing) {
+			setProgressPercent(0);
+			return;
+		}
+
+		const interval = window.setInterval(() => {
+			setProgressPercent((current) => {
+				const ceiling = engine === "ai" && aiUsesRunpod ? 92 : 88;
+				const step =
+					engine === "ai" && aiUsesRunpod
+						? current < 20
+							? 4
+							: current < 60
+								? 2
+								: 1
+						: current < 50
+							? 3
+							: 1;
+
+				return Math.min(current + step, ceiling);
+			});
+		}, 1200);
+
+		return () => {
+			window.clearInterval(interval);
+		};
+	}, [aiUsesRunpod, engine, isProcessing]);
+
 	const handleProcess = async () => {
 		if (!activeProject || !mediaAsset?.file) {
 			toast.error("No source video available");
@@ -176,6 +248,7 @@ export function WatermarkTab({
 		}
 
 		setIsProcessing(true);
+		setProgressPercent(3);
 		try {
 			const formData = new FormData();
 			formData.append("file", mediaAsset.file, mediaAsset.file.name);
@@ -205,6 +278,9 @@ export function WatermarkTab({
 				const errorText = await response.text();
 				throw new Error(errorText || "Watermark cleanup failed");
 			}
+
+			const aiMode = response.headers.get("X-GSM-AI-Mode");
+			const aiModeReason = response.headers.get("X-GSM-AI-Reason");
 
 			const blob = await response.blob();
 			const cleanedFile = new File(
@@ -258,12 +334,18 @@ export function WatermarkTab({
 					elements: [{ trackId: insertTrackId, elementId: insertedElement.id }],
 				});
 			}
+			setProgressPercent(100);
 			setLastOutputName(createdAsset.name);
 
 			toast.success("Watermark cleanup finished", {
 				description:
 					"A cleaned clip was added to Media and stacked above the original on the timeline.",
 			});
+			if (engine === "ai" && aiMode === "local-fallback" && aiModeReason) {
+				toast.info("Runpod upload limit reached", {
+					description: aiModeReason,
+				});
+			}
 		} catch (error) {
 			console.error(error);
 			toast.error("Watermark cleanup failed", {
@@ -320,11 +402,12 @@ export function WatermarkTab({
 					<button
 						type="button"
 						onClick={() => setEngine("veo")}
+						disabled={!veoAvailable}
 						className={`rounded-lg border px-3 py-3 text-left transition ${
 							engine === "veo"
 								? "border-primary bg-primary/10"
 								: "hover:bg-accent/40"
-						}`}
+						} ${!veoAvailable ? "cursor-not-allowed opacity-50" : ""}`}
 					>
 						<div className="text-sm font-medium">Veo Remove</div>
 						<div className="text-muted-foreground mt-1 text-xs">
@@ -447,22 +530,27 @@ export function WatermarkTab({
 				) : engine === "ai" ? (
 					<div className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
 						AI mode uses {detectionPrompt || "watermark"} detection. If Runpod
-						is configured, this will run remotely on your endpoint. Otherwise it
-						falls back to local CPU processing, which is much slower. Faster
-						defaults are set to skip more frames and disable fade expansion.
+						{aiUsesRunpod
+							? " is configured, so this will run remotely on your endpoint."
+							: " is not configured yet, so this will fall back to local CPU processing."}{" "}
+						Faster defaults are set to skip more frames and disable fade
+						expansion.
 					</div>
 				) : (
 					<div className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
 						Veo Remove is designed for Veo watermarks and should be much faster
 						than the AI mode, but it requires the Veo release executable in the
-						vendor folder first.
+						vendor folder first.{" "}
+						{engineAvailability?.veo.reason
+							? engineAvailability.veo.reason
+							: ""}
 					</div>
 				)}
 
 				<div className="rounded-md border px-3 py-2 text-sm">
 					<div className="font-medium">
 						{isProcessing
-							? "Processing clip..."
+							? `Processing clip... ${progressPercent}%`
 							: lastOutputName
 								? "Last cleaned result"
 								: "Ready to run"}
@@ -480,6 +568,21 @@ export function WatermarkTab({
 								? `${lastOutputName} was added to Media and selected on the timeline.`
 								: "Choose an engine, adjust settings, then click Remove watermark."}
 					</div>
+					{isProcessing ? (
+						<div className="mt-3">
+							<div className="h-2 overflow-hidden rounded-full bg-accent">
+								<div
+									className="bg-primary h-full transition-[width] duration-500 ease-out"
+									style={{ width: `${progressPercent}%` }}
+								/>
+							</div>
+							<div className="text-muted-foreground mt-2 text-xs">
+								{engine === "ai" && aiUsesRunpod
+									? "Queued and remote GPU processing can take time while the worker starts and renders the cleaned clip."
+									: "Processing locally. Time depends on clip length and engine settings."}
+							</div>
+						</div>
+					) : null}
 				</div>
 
 				<Button
