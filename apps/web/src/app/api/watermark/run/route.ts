@@ -4,10 +4,25 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { NextResponse } from "next/server";
-import { hasRunpodConfig, submitRunpodSyncJob } from "@/lib/cloud/runpod";
+import {
+	getRunpodJobStatus,
+	hasRunpodConfig,
+	submitRunpodJob,
+} from "@/lib/cloud/runpod";
+import {
+	createSignedDownloadUrl,
+	createSignedUploadUrl,
+	deleteObject as deleteR2Object,
+	hasR2Config,
+	uploadTempObject,
+} from "@/lib/cloud/r2";
+import { webEnv } from "@/lib/env/web";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const RUNPOD_SAFE_RAW_UPLOAD_BYTES = 7 * 1024 * 1024;
+const PUBLIC_UPLOAD_DIR = path.join(os.tmpdir(), "gsmediacut-public-uploads");
 
 function parsePositiveInt(value: FormDataEntryValue | null) {
 	if (typeof value !== "string") {
@@ -57,6 +72,23 @@ async function resolveVeoExecutable() {
 	}
 
 	return null;
+}
+
+export async function GET() {
+	const executablePath = await resolveVeoExecutable();
+
+	return NextResponse.json({
+		engines: {
+			fast: { available: true },
+			ai: { available: true, remote: hasRunpodConfig() },
+			veo: {
+				available: Boolean(executablePath),
+				reason: executablePath
+					? null
+					: "GeminiWatermarkTool-Video.exe is missing from vendor/VeoWatermarkRemover.",
+			},
+		},
+	});
 }
 
 function runFfmpeg(args: string[]) {
@@ -188,9 +220,193 @@ function parseRunpodVideoOutput(output: unknown) {
 	return { base64Value, urlValue };
 }
 
+function sleep(ms: number) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function downloadBufferWithRetry(url: string, attempts = 8) {
+	let lastStatus = 0;
+
+	for (let attempt = 0; attempt < attempts; attempt += 1) {
+		const response = await fetch(url, { cache: "no-store" });
+		if (response.ok) {
+			return Buffer.from(await response.arrayBuffer());
+		}
+
+		lastStatus = response.status;
+		if (response.status !== 404 && response.status !== 403) {
+			throw new Error(`Download failed with ${response.status}.`);
+		}
+
+		await sleep(1000);
+	}
+
+	throw new Error(`Download failed with ${lastStatus}.`);
+}
+
+function getPublicBaseUrl() {
+	const candidate =
+		webEnv.SERVER_PUBLIC_BASE_URL ?? webEnv.NEXT_PUBLIC_SITE_URL ?? null;
+	if (!candidate) {
+		return null;
+	}
+
+	const parsed = new URL(candidate);
+	if (
+		parsed.hostname === "localhost" ||
+		parsed.hostname === "127.0.0.1" ||
+		parsed.hostname === "::1"
+	) {
+		return null;
+	}
+
+	return parsed.toString().replace(/\/$/, "");
+}
+
+function isRemoteAiMode(aiMode: string) {
+	return (
+		aiMode === "runpod" || aiMode === "runpod-r2" || aiMode === "runpod-url"
+	);
+}
+
+async function createRunpodSourceUpload({
+	file,
+	fileBuffer,
+}: {
+	file: File;
+	fileBuffer: Buffer;
+}) {
+	const publicBaseUrl = getPublicBaseUrl();
+	if (!publicBaseUrl) {
+		return null;
+	}
+
+	const uploadId = randomUUID();
+	const token = randomUUID();
+	const extension = path.extname(file.name) || ".mp4";
+	const filePath = path.join(PUBLIC_UPLOAD_DIR, `${uploadId}${extension}`);
+	const metadataPath = path.join(PUBLIC_UPLOAD_DIR, `${uploadId}.json`);
+
+	await fs.mkdir(PUBLIC_UPLOAD_DIR, { recursive: true });
+	await fs.writeFile(filePath, fileBuffer);
+	await fs.writeFile(
+		metadataPath,
+		JSON.stringify({
+			token,
+			filePath,
+			contentType: file.type || "video/mp4",
+			fileName: file.name,
+		}),
+	);
+
+	return {
+		filePath,
+		metadataPath,
+		sourceUrl: `${publicBaseUrl}/api/uploads/watermark/${uploadId}?token=${encodeURIComponent(token)}`,
+	};
+}
+
+async function cleanupRunpodSourceUpload(
+	upload:
+		| {
+				filePath: string;
+				metadataPath: string;
+		  }
+		| null
+		| undefined,
+) {
+	if (!upload) {
+		return;
+	}
+
+	await fs.rm(upload.filePath, { force: true });
+	await fs.rm(upload.metadataPath, { force: true });
+}
+
+async function createRunpodR2Upload({
+	file,
+	fileBuffer,
+}: {
+	file: File;
+	fileBuffer: Buffer;
+}) {
+	const extension = path.extname(file.name) || ".mp4";
+	const uploadId = randomUUID();
+	const key = `temp-uploads/${uploadId}${extension}`;
+
+	await uploadTempObject({
+		key,
+		body: new Uint8Array(fileBuffer),
+		contentType: file.type || "video/mp4",
+	});
+
+	const sourceUrl = await createSignedDownloadUrl({
+		key,
+		expiresInSeconds: 60 * 60 * 2,
+	});
+
+	return { key, sourceUrl };
+}
+
+async function createRunpodR2ResultUpload({ file }: { file: File }) {
+	const extension = path.extname(file.name) || ".mp4";
+	const uploadId = randomUUID();
+	const key = `temp-results/${uploadId}${extension}`;
+	const contentType = file.type || "video/mp4";
+
+	const [resultUploadUrl, resultDownloadUrl] = await Promise.all([
+		createSignedUploadUrl({
+			key,
+			contentType,
+			expiresInSeconds: 60 * 60 * 2,
+		}),
+		createSignedDownloadUrl({
+			key,
+			expiresInSeconds: 60 * 60 * 2,
+		}),
+	]);
+
+	return { key, resultUploadUrl, resultDownloadUrl };
+}
+
+async function waitForRunpodCompletion(jobId: string) {
+	const timeoutAt = Date.now() + 1000 * 60 * 20;
+
+	while (Date.now() < timeoutAt) {
+		const status = await getRunpodJobStatus({ jobId });
+
+		if (typeof status.error === "string" && status.error) {
+			throw new Error(`Runpod worker failed: ${status.error}`);
+		}
+
+		if (status.status === "COMPLETED" || status.status === "SUCCESS") {
+			return status;
+		}
+
+		if (
+			status.status === "FAILED" ||
+			status.status === "CANCELLED" ||
+			status.status === "TIMED_OUT"
+		) {
+			throw new Error(
+				`Runpod job failed. Status: ${status.status}${
+					status.error ? ` - ${status.error}` : ""
+				}`,
+			);
+		}
+
+		await sleep(2500);
+	}
+
+	throw new Error("Runpod job timed out while waiting for completion.");
+}
+
 async function runRunpodWatermark({
 	file,
 	fileBuffer,
+	sourceUrl,
+	resultUploadUrl,
+	resultDownloadUrl,
 	detectionPrompt,
 	detectionSkip,
 	fadeIn,
@@ -198,29 +414,70 @@ async function runRunpodWatermark({
 }: {
 	file: File;
 	fileBuffer: Buffer;
+	sourceUrl?: string;
+	resultUploadUrl?: string;
+	resultDownloadUrl?: string;
 	detectionPrompt: string;
 	detectionSkip: number;
 	fadeIn: string;
 	fadeOut: string;
 }) {
-	const result = await submitRunpodSyncJob({
-		input: {
-			task: "watermark_remove",
-			engine: "watermarkremover-ai",
-			filename: file.name,
-			mimeType: file.type || "video/mp4",
-			fileBase64: fileBuffer.toString("base64"),
-			detectionPrompt,
-			detectionSkip,
-			fadeIn,
-			fadeOut,
-		},
-	});
+	let queuedJob: Awaited<ReturnType<typeof submitRunpodJob>>;
+	try {
+		queuedJob = await submitRunpodJob({
+			input: {
+				task: "watermark_remove",
+				engine: "watermarkremover-ai",
+				filename: file.name,
+				mimeType: file.type || "video/mp4",
+				...(sourceUrl
+					? { sourceUrl }
+					: { fileBase64: fileBuffer.toString("base64") }),
+				...(resultUploadUrl ? { resultUploadUrl } : {}),
+				detectionPrompt,
+				detectionSkip,
+				fadeIn,
+				fadeOut,
+			},
+		});
+	} catch (error) {
+		if (
+			error instanceof Error &&
+			error.message.includes("exceeded max body size of 10MiB")
+		) {
+			throw new Error("RUNPOD_BODY_LIMIT_EXCEEDED");
+		}
+		throw error;
+	}
+
+	if (typeof queuedJob.error === "string" && queuedJob.error) {
+		throw new Error(`Runpod worker failed: ${queuedJob.error}`);
+	}
+
+	if (!queuedJob.id) {
+		throw new Error("Runpod did not return a job id.");
+	}
+
+	const result = await waitForRunpodCompletion(queuedJob.id);
+
+	if (resultDownloadUrl) {
+		try {
+			return await downloadBufferWithRetry(resultDownloadUrl);
+		} catch (error) {
+			throw new Error(
+				`Runpod completed but the result download failed: ${
+					error instanceof Error ? error.message : "unknown error"
+				}`,
+			);
+		}
+	}
 
 	const parsed = parseRunpodVideoOutput(result.output ?? result);
 	if (!parsed) {
 		throw new Error(
-			"Runpod returned no usable video output. Expected videoBase64 or videoUrl in the result.",
+			`Runpod returned no usable video output. Status: ${
+				result.status ?? "unknown"
+			}. Expected videoBase64 or videoUrl in the result.`,
 		);
 	}
 
@@ -282,23 +539,95 @@ export async function POST(request: Request) {
 	const inputExtension = path.extname(file.name) || ".mp4";
 	const inputPath = path.join(tempDir, `input${inputExtension}`);
 	const outputPath = path.join(tempDir, "output_cleaned.mp4");
+	let responseEngine = engine;
+	let aiMode = "n/a";
+	let aiModeReason: string | null = null;
+	let runpodR2Upload: { key: string; sourceUrl: string } | null = null;
+	let runpodR2ResultUpload: {
+		key: string;
+		resultUploadUrl: string;
+		resultDownloadUrl: string;
+	} | null = null;
+	let runpodSourceUpload: {
+		filePath: string;
+		metadataPath: string;
+		sourceUrl: string;
+	} | null = null;
 
 	try {
 		const inputBuffer = Buffer.from(await file.arrayBuffer());
 		await fs.writeFile(inputPath, inputBuffer);
 
 		if (engine === "ai") {
-			if (hasRunpodConfig()) {
-				const runpodBuffer = await runRunpodWatermark({
-					file,
-					fileBuffer: inputBuffer,
-					detectionPrompt,
-					detectionSkip: Math.min(Math.max(detectionSkip, 1), 10),
-					fadeIn,
-					fadeOut,
-				});
-				await fs.writeFile(outputPath, runpodBuffer);
-			} else {
+			const shouldUseRunpod =
+				hasRunpodConfig() &&
+				(hasR2Config() ||
+					inputBuffer.byteLength <= RUNPOD_SAFE_RAW_UPLOAD_BYTES ||
+					Boolean(getPublicBaseUrl()));
+
+			if (hasRunpodConfig() && !shouldUseRunpod) {
+				aiMode = "local-fallback";
+				aiModeReason =
+					"Clip is too large for Runpod inline upload and neither R2 nor a public upload URL is configured, so AI fell back to local processing.";
+			}
+
+			if (shouldUseRunpod) {
+				try {
+					if (hasR2Config()) {
+						[runpodR2Upload, runpodR2ResultUpload] = await Promise.all([
+							createRunpodR2Upload({
+								file,
+								fileBuffer: inputBuffer,
+							}),
+							createRunpodR2ResultUpload({ file }),
+						]);
+					} else if (inputBuffer.byteLength > RUNPOD_SAFE_RAW_UPLOAD_BYTES) {
+						runpodSourceUpload = await createRunpodSourceUpload({
+							file,
+							fileBuffer: inputBuffer,
+						});
+						if (!runpodSourceUpload) {
+							aiMode = "local-fallback";
+							aiModeReason =
+								"Large Runpod jobs need R2 configured or SERVER_PUBLIC_BASE_URL set to a public URL so Runpod can download the clip.";
+						}
+					}
+
+					if (aiMode !== "local-fallback") {
+						const runpodBuffer = await runRunpodWatermark({
+							file,
+							fileBuffer: inputBuffer,
+							sourceUrl:
+								runpodR2Upload?.sourceUrl ?? runpodSourceUpload?.sourceUrl,
+							resultUploadUrl: runpodR2ResultUpload?.resultUploadUrl,
+							resultDownloadUrl: runpodR2ResultUpload?.resultDownloadUrl,
+							detectionPrompt,
+							detectionSkip: Math.min(Math.max(detectionSkip, 1), 10),
+							fadeIn,
+							fadeOut,
+						});
+						aiMode = runpodR2Upload
+							? "runpod-r2"
+							: runpodSourceUpload
+								? "runpod-url"
+								: "runpod";
+						await fs.writeFile(outputPath, runpodBuffer);
+					}
+				} catch (error) {
+					if (
+						error instanceof Error &&
+						error.message === "RUNPOD_BODY_LIMIT_EXCEEDED"
+					) {
+						aiMode = "local-fallback";
+						aiModeReason =
+							"Runpod rejected the inline upload size, so AI fell back to local processing.";
+					} else {
+						throw error;
+					}
+				}
+			}
+
+			if (!isRemoteAiMode(aiMode)) {
 				const scriptPath = await resolveVendorFile(
 					"WatermarkRemover-AI",
 					"remwm.py",
@@ -311,6 +640,12 @@ export async function POST(request: Request) {
 							status: 500,
 						},
 					);
+				}
+				responseEngine = "ai";
+				if (aiMode === "n/a") {
+					aiMode = "local";
+					aiModeReason =
+						"Runpod is not configured, so AI used local processing.";
 				}
 
 				const pythonEnv = buildPythonEnv(tempDir);
@@ -384,7 +719,9 @@ export async function POST(request: Request) {
 			status: 200,
 			headers: {
 				"Content-Type": "video/mp4",
-				"X-GSM-Engine": engine,
+				"X-GSM-Engine": responseEngine,
+				"X-GSM-AI-Mode": aiMode,
+				"X-GSM-AI-Reason": aiModeReason ?? "",
 				"Content-Disposition": `inline; filename="${path.basename(file.name, inputExtension)}_cleaned.mp4"`,
 			},
 		});
@@ -395,6 +732,15 @@ export async function POST(request: Request) {
 			{ status: 500 },
 		);
 	} finally {
+		if (runpodR2Upload) {
+			await deleteR2Object({ key: runpodR2Upload.key }).catch(() => undefined);
+		}
+		if (runpodR2ResultUpload) {
+			await deleteR2Object({ key: runpodR2ResultUpload.key }).catch(
+				() => undefined,
+			);
+		}
+		await cleanupRunpodSourceUpload(runpodSourceUpload);
 		await fs.rm(tempDir, { recursive: true, force: true });
 	}
 }

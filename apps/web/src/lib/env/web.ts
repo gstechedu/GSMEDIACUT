@@ -27,6 +27,11 @@ const webEnvSchema = z.object({
 	RUNPOD_API_KEY: z.string().optional(),
 	RUNPOD_ENDPOINT_ID: z.string().optional(),
 	RUNPOD_API_BASE_URL: z.url().default("https://api.runpod.ai/v2"),
+	R2_ACCOUNT_ID: z.string().optional(),
+	R2_ACCESS_KEY_ID: z.string().optional(),
+	R2_SECRET_ACCESS_KEY: z.string().optional(),
+	R2_BUCKET: z.string().optional(),
+	SERVER_PUBLIC_BASE_URL: z.url().optional(),
 });
 
 export type WebEnv = z.infer<typeof webEnvSchema>;

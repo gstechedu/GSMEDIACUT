@@ -27,6 +27,21 @@ import type { VideoElement } from "@/lib/timeline";
 
 type PresetKey = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 type WatermarkEngine = "fast" | "ai" | "veo";
+type EngineAvailability = {
+	fast: { available: boolean };
+	ai: { available: boolean; remote?: boolean };
+	veo: { available: boolean; reason?: string | null };
+};
+
+type ProcessingPhase =
+	| "idle"
+	| "preparing"
+	| "uploading"
+	| "queued"
+	| "processing"
+	| "downloading"
+	| "importing"
+	| "cleaning";
 
 const PRESETS: Array<{ id: PresetKey; label: string }> = [
 	{ id: "top-left", label: "Top left" },
@@ -93,7 +108,7 @@ function buildDefaultRegion({
 export function WatermarkTab({
 	element,
 	mediaAsset,
-	trackId: _trackId,
+	trackId,
 }: {
 	element: VideoElement;
 	mediaAsset: MediaAsset | undefined;
@@ -101,6 +116,7 @@ export function WatermarkTab({
 }) {
 	const editor = useEditor();
 	const activeProject = useEditor((e) => e.project.getActive());
+	const activeScene = useEditor((e) => e.scenes.getActiveSceneOrNull());
 	const [engine, setEngine] = useState<WatermarkEngine>("fast");
 	const [preset, setPreset] = useState<PresetKey>("top-left");
 	const [x, setX] = useState("0");
@@ -108,11 +124,16 @@ export function WatermarkTab({
 	const [width, setWidth] = useState("0");
 	const [height, setHeight] = useState("0");
 	const [detectionPrompt, setDetectionPrompt] = useState("watermark");
-	const [detectionSkip, setDetectionSkip] = useState("6");
+	const [detectionSkip, setDetectionSkip] = useState("8");
 	const [fadeIn, setFadeIn] = useState("0.0");
 	const [fadeOut, setFadeOut] = useState("0.0");
 	const [isProcessing, setIsProcessing] = useState(false);
+	const [progressPercent, setProgressPercent] = useState(0);
+	const [processingPhase, setProcessingPhase] =
+		useState<ProcessingPhase>("idle");
 	const [lastOutputName, setLastOutputName] = useState<string | null>(null);
+	const [engineAvailability, setEngineAvailability] =
+		useState<EngineAvailability | null>(null);
 
 	const sourceWidth = mediaAsset?.width ?? 0;
 	const sourceHeight = mediaAsset?.height ?? 0;
@@ -135,6 +156,38 @@ export function WatermarkTab({
 		setWidth(defaults.width.toString());
 		setHeight(defaults.height.toString());
 	}, [hasProcessableAsset, preset, sourceHeight, sourceWidth]);
+
+	useEffect(() => {
+		let cancelled = false;
+
+		void fetch("/api/watermark/run", { method: "GET" })
+			.then(async (response) => {
+				if (!response.ok) {
+					throw new Error("Failed to load watermark engine status");
+				}
+				return response.json();
+			})
+			.then((data) => {
+				if (cancelled) {
+					return;
+				}
+				setEngineAvailability(data.engines as EngineAvailability);
+				setEngine((currentEngine) =>
+					currentEngine === "veo" && !data.engines?.veo?.available
+						? "ai"
+						: currentEngine,
+				);
+			})
+			.catch(() => {
+				if (!cancelled) {
+					setEngineAvailability(null);
+				}
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	const regionSummary = useMemo(() => {
 		const nextX = parseInput(x);
@@ -161,6 +214,113 @@ export function WatermarkTab({
 		};
 	}, [height, sourceHeight, sourceWidth, width, x, y]);
 
+	const veoAvailable = engineAvailability?.veo.available ?? false;
+	const aiUsesRunpod = engineAvailability?.ai.remote ?? false;
+
+	const insertTrackIndex = useMemo(() => {
+		if (!activeScene) {
+			return 0;
+		}
+
+		const overlayIndex = activeScene.tracks.overlay.findIndex(
+			(sceneTrack) => sceneTrack.id === trackId,
+		);
+		if (overlayIndex >= 0) {
+			return overlayIndex;
+		}
+
+		if (activeScene.tracks.main.id === trackId) {
+			return activeScene.tracks.overlay.length;
+		}
+
+		return 0;
+	}, [activeScene, trackId]);
+
+	useEffect(() => {
+		if (!isProcessing) {
+			setProgressPercent(0);
+			setProcessingPhase("idle");
+			return;
+		}
+
+		const interval = window.setInterval(() => {
+			setProgressPercent((current) => {
+				const phaseConfig: Record<
+					ProcessingPhase,
+					{ ceiling: number; step: number }
+				> = {
+					idle: { ceiling: 0, step: 0 },
+					preparing: { ceiling: 8, step: 2 },
+					uploading: { ceiling: 24, step: 3 },
+					queued: { ceiling: 42, step: 2 },
+					processing: { ceiling: 78, step: 2 },
+					downloading: { ceiling: 88, step: 2 },
+					importing: { ceiling: 95, step: 1 },
+					cleaning: { ceiling: 98, step: 1 },
+				};
+				const { ceiling, step } =
+					phaseConfig[processingPhase] ??
+					(engine === "ai" && aiUsesRunpod
+						? { ceiling: 92, step: 1 }
+						: { ceiling: 88, step: 1 });
+
+				return Math.min(current + step, ceiling);
+			});
+		}, 1200);
+
+		return () => {
+			window.clearInterval(interval);
+		};
+	}, [aiUsesRunpod, engine, isProcessing, processingPhase]);
+
+	const phaseLabel = useMemo(() => {
+		switch (processingPhase) {
+			case "preparing":
+				return "Preparing clip";
+			case "uploading":
+				return aiUsesRunpod ? "Uploading source" : "Preparing local job";
+			case "queued":
+				return "Queued on Runpod";
+			case "processing":
+				return engine === "ai" && aiUsesRunpod
+					? "Processing on remote GPU"
+					: "Processing locally";
+			case "downloading":
+				return "Downloading cleaned result";
+			case "importing":
+				return "Importing cleaned clip";
+			case "cleaning":
+				return "Cleaning up temporary files";
+			default:
+				return null;
+		}
+	}, [aiUsesRunpod, engine, processingPhase]);
+
+	const phaseDescription = useMemo(() => {
+		switch (processingPhase) {
+			case "preparing":
+				return "Checking the selected clip and building the processing request.";
+			case "uploading":
+				return aiUsesRunpod
+					? "Sending the source clip to temporary cloud storage for Runpod."
+					: "Starting the local watermark cleanup pipeline.";
+			case "queued":
+				return "Waiting for an available worker to pick up the AI job.";
+			case "processing":
+				return engine === "ai" && aiUsesRunpod
+					? "Runpod is detecting and removing the watermark on the GPU."
+					: "The local engine is rendering the cleaned clip.";
+			case "downloading":
+				return "Fetching the cleaned video back into GSMEDIACUT.";
+			case "importing":
+				return "Adding the cleaned clip to Media and placing it on the timeline.";
+			case "cleaning":
+				return "Removing temporary cloud or local files after the result is secured.";
+			default:
+				return null;
+		}
+	}, [aiUsesRunpod, engine, processingPhase]);
+
 	const handleProcess = async () => {
 		if (!activeProject || !mediaAsset?.file) {
 			toast.error("No source video available");
@@ -176,6 +336,8 @@ export function WatermarkTab({
 		}
 
 		setIsProcessing(true);
+		setProgressPercent(3);
+		setProcessingPhase("preparing");
 		try {
 			const formData = new FormData();
 			formData.append("file", mediaAsset.file, mediaAsset.file.name);
@@ -196,17 +358,37 @@ export function WatermarkTab({
 				formData.append("fadeOut", fadeOut);
 			}
 
+			setProcessingPhase("uploading");
 			const response = await fetch("/api/watermark/run", {
 				method: "POST",
 				body: formData,
 			});
+
+			setProcessingPhase(
+				engine === "ai" && aiUsesRunpod ? "processing" : "downloading",
+			);
 
 			if (!response.ok) {
 				const errorText = await response.text();
 				throw new Error(errorText || "Watermark cleanup failed");
 			}
 
+			const aiMode = response.headers.get("X-GSM-AI-Mode");
+			const aiModeReason = response.headers.get("X-GSM-AI-Reason");
+			if (engine === "ai" && aiUsesRunpod) {
+				if (
+					aiMode === "runpod-r2" ||
+					aiMode === "runpod-url" ||
+					aiMode === "runpod"
+				) {
+					setProcessingPhase("downloading");
+				} else if (aiMode === "local-fallback" || aiMode === "local") {
+					setProcessingPhase("processing");
+				}
+			}
+
 			const blob = await response.blob();
+			setProcessingPhase("importing");
 			const cleanedFile = new File(
 				[blob],
 				mediaAsset.name.replace(/(\.[^.]+)?$/, "_cleaned.mp4"),
@@ -232,7 +414,7 @@ export function WatermarkTab({
 
 			const insertTrackId = editor.timeline.addTrack({
 				type: "video",
-				index: 0,
+				index: insertTrackIndex,
 			});
 			const cleanedElement = buildElementFromMedia({
 				mediaId: createdAsset.id,
@@ -254,16 +436,35 @@ export function WatermarkTab({
 						trackElement.mediaId === createdAsset.id,
 				);
 			if (insertedElement) {
+				editor.timeline.updateElements({
+					updates: [
+						{
+							trackId,
+							elementId: element.id,
+							patch: {
+								hidden: true,
+								muted: true,
+							},
+						},
+					],
+				});
 				editor.selection.setSelectedElements({
 					elements: [{ trackId: insertTrackId, elementId: insertedElement.id }],
 				});
 			}
+			setProcessingPhase("cleaning");
+			setProgressPercent(100);
 			setLastOutputName(createdAsset.name);
 
 			toast.success("Watermark cleanup finished", {
 				description:
-					"A cleaned clip was added to Media and stacked above the original on the timeline.",
+					"A cleaned clip was added above the original. The original clip was hidden and muted so the result is visible immediately.",
 			});
+			if (engine === "ai" && aiMode === "local-fallback" && aiModeReason) {
+				toast.info("Runpod upload limit reached", {
+					description: aiModeReason,
+				});
+			}
 		} catch (error) {
 			console.error(error);
 			toast.error("Watermark cleanup failed", {
@@ -320,11 +521,12 @@ export function WatermarkTab({
 					<button
 						type="button"
 						onClick={() => setEngine("veo")}
+						disabled={!veoAvailable}
 						className={`rounded-lg border px-3 py-3 text-left transition ${
 							engine === "veo"
 								? "border-primary bg-primary/10"
 								: "hover:bg-accent/40"
-						}`}
+						} ${!veoAvailable ? "cursor-not-allowed opacity-50" : ""}`}
 					>
 						<div className="text-sm font-medium">Veo Remove</div>
 						<div className="text-muted-foreground mt-1 text-xs">
@@ -447,39 +649,56 @@ export function WatermarkTab({
 				) : engine === "ai" ? (
 					<div className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
 						AI mode uses {detectionPrompt || "watermark"} detection. If Runpod
-						is configured, this will run remotely on your endpoint. Otherwise it
-						falls back to local CPU processing, which is much slower. Faster
-						defaults are set to skip more frames and disable fade expansion.
+						{aiUsesRunpod
+							? " is configured, so this will run remotely on your endpoint."
+							: " is not configured yet, so this will fall back to local CPU processing."}{" "}
+						Faster defaults are set to skip more frames and disable fade
+						expansion.
 					</div>
 				) : (
 					<div className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
 						Veo Remove is designed for Veo watermarks and should be much faster
 						than the AI mode, but it requires the Veo release executable in the
-						vendor folder first.
+						vendor folder first.{" "}
+						{engineAvailability?.veo.reason
+							? engineAvailability.veo.reason
+							: ""}
 					</div>
 				)}
 
 				<div className="rounded-md border px-3 py-2 text-sm">
 					<div className="font-medium">
 						{isProcessing
-							? "Processing clip..."
+							? `Processing clip... ${progressPercent}%`
 							: lastOutputName
 								? "Last cleaned result"
 								: "Ready to run"}
 					</div>
 					<div className="text-muted-foreground mt-1">
 						{isProcessing
-							? `Running ${
-									engine === "ai"
-										? "AI"
-										: engine === "veo"
-											? "Veo Remove"
-											: "Fast"
-								} cleanup on ${mediaAsset?.name ?? "selected clip"}.`
+							? `${phaseLabel ?? "Processing"} on ${
+									mediaAsset?.name ?? "selected clip"
+								}.`
 							: lastOutputName
 								? `${lastOutputName} was added to Media and selected on the timeline.`
 								: "Choose an engine, adjust settings, then click Remove watermark."}
 					</div>
+					{isProcessing ? (
+						<div className="mt-3">
+							<div className="h-2 overflow-hidden rounded-full bg-accent">
+								<div
+									className="bg-primary h-full transition-[width] duration-500 ease-out"
+									style={{ width: `${progressPercent}%` }}
+								/>
+							</div>
+							<div className="text-muted-foreground mt-2 text-xs">
+								{phaseDescription ??
+									(engine === "ai" && aiUsesRunpod
+										? "Queued and remote GPU processing can take time while the worker starts and renders the cleaned clip."
+										: "Processing locally. Time depends on clip length and engine settings.")}
+							</div>
+						</div>
+					) : null}
 				</div>
 
 				<Button

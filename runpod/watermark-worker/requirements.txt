@@ -16,6 +16,7 @@ requests
 runpod>=1.7.0
 pydantic
 typer
+typer-config
 einops
 omegaconf
 easydict
