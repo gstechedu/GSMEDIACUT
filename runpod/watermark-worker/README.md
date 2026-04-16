@@ -1,15 +1,14 @@
 # Runpod Watermark Worker
 
-This worker runs `vendor/WatermarkRemover-AI/remwm.py` on a Runpod Serverless GPU endpoint.
+This worker runs `WatermarkRemover-AI/remwm.py` on a Runpod Serverless GPU endpoint.
 
 ## Repo layout
 
 Keep this folder in the same repository as:
 
-- `vendor/WatermarkRemover-AI`
 - `runpod/watermark-worker`
 
-The Dockerfile copies both paths into the container.
+The Dockerfile clones `D-Ogi/WatermarkRemover-AI` during the Runpod build, so you do not need to commit the `vendor/WatermarkRemover-AI` folder to GitHub.
 
 ## Runpod deployment
 
@@ -25,7 +24,7 @@ Set the Dockerfile path to:
 runpod/watermark-worker/Dockerfile
 ```
 
-Use the repository root as the build context so the Docker build can copy `vendor/WatermarkRemover-AI`.
+Use the repository root as the build context.
 
 ## Expected input
 

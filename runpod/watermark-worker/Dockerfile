@@ -4,6 +4,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
+ENV WATERMARK_REMOVER_REPO=https://github.com/D-Ogi/WatermarkRemover-AI
+ENV WATERMARK_REMOVER_REF=2a15d4d51a483a9fdc8437ec52b1146319d9bda9
 
 WORKDIR /app
 
@@ -26,7 +28,10 @@ RUN python3 -m pip install --upgrade pip setuptools wheel && \
     python3 -m pip install -r /tmp/requirements.txt && \
     python3 -m pip install --no-deps iopaint
 
-COPY vendor/WatermarkRemover-AI /app/vendor/WatermarkRemover-AI
 COPY runpod/watermark-worker /app/runpod/watermark-worker
+
+RUN git clone ${WATERMARK_REMOVER_REPO} /app/vendor/WatermarkRemover-AI && \
+    cd /app/vendor/WatermarkRemover-AI && \
+    git checkout ${WATERMARK_REMOVER_REF}
 
 CMD ["python3", "/app/runpod/watermark-worker/handler.py"]
