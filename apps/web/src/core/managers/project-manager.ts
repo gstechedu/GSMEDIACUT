@@ -8,6 +8,7 @@ import type {
 	TTimelineViewState,
 } from "@/lib/project/types";
 import type { ExportOptions, ExportResult, ExportState } from "@/lib/export";
+import type { ProjectState } from "@/lib/hybrid/types";
 import { storageService } from "@/services/storage/service";
 import { toast } from "sonner";
 import { generateUUID } from "@/utils/id";
@@ -15,6 +16,10 @@ import { UpdateProjectSettingsCommand } from "@/lib/commands/project";
 import { DEFAULT_BACKGROUND_COLOR } from "@/lib/background/constants";
 import { DEFAULT_CANVAS_SIZE } from "@/lib/canvas/constants";
 import { DEFAULT_FPS } from "@/lib/fps/constants";
+import {
+	createDefaultProjectState,
+	normalizeProjectState,
+} from "@/lib/hybrid/project-state";
 import { buildDefaultScene, getProjectDurationFromScenes } from "@/lib/scenes";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
@@ -102,6 +107,7 @@ export class ProjectManager {
 					color: DEFAULT_BACKGROUND_COLOR,
 				},
 			},
+			projectState: createDefaultProjectState(),
 			version: CURRENT_PROJECT_VERSION,
 		};
 
@@ -143,6 +149,7 @@ export class ProjectManager {
 			}
 
 			const project = result.project;
+			project.projectState = normalizeProjectState(project.projectState);
 
 			this.active = project;
 			this.notify();
@@ -195,6 +202,7 @@ export class ProjectManager {
 					duration: getProjectDurationFromScenes({ scenes }),
 					updatedAt: new Date(),
 				},
+				projectState: normalizeProjectState(this.active.projectState),
 			};
 
 			await storageService.saveProject({ project: updatedProject });
@@ -251,8 +259,11 @@ export class ProjectManager {
 		try {
 			await this.ensureStorageMigrations();
 			try {
-				const metadata = await storageService.loadAllProjectsMetadata();
-				this.savedProjects = metadata;
+				const [internalProjects, externalProjects] = await Promise.all([
+					storageService.loadAllProjectsMetadata(),
+					storageService.loadExternalProjectsMetadata(),
+				]);
+				this.savedProjects = [...internalProjects, ...externalProjects];
 				this.notify();
 			} catch (error) {
 				console.error("Failed to load projects:", error);
@@ -614,6 +625,32 @@ export class ProjectManager {
 		this.active = {
 			...this.active,
 			timelineViewState: viewState ?? undefined,
+		};
+		this.editor.save.markDirty();
+		this.notify();
+	}
+
+	updateProjectState({ projectState }: { projectState: ProjectState }): void {
+		if (!this.active) return;
+
+		this.active = {
+			...this.active,
+			projectState: normalizeProjectState(projectState),
+		};
+		this.editor.save.markDirty();
+		this.notify();
+	}
+
+	patchProjectState({
+		updater,
+	}: {
+		updater: (projectState: ProjectState) => ProjectState;
+	}): void {
+		if (!this.active) return;
+
+		this.active = {
+			...this.active,
+			projectState: normalizeProjectState(updater(this.active.projectState)),
 		};
 		this.editor.save.markDirty();
 		this.notify();

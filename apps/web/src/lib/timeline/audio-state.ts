@@ -1,5 +1,6 @@
 import { hasKeyframesForPath } from "@/lib/animation/keyframe-query";
 import { resolveNumberAtTime } from "@/lib/animation/resolve";
+import { TICKS_PER_SECOND } from "@/lib/wasm";
 import { VOLUME_DB_MAX, VOLUME_DB_MIN } from "./audio-constants";
 import type { TimelineElement } from "./types";
 const DEFAULT_STEP_SECONDS = 1 / 60;
@@ -21,6 +22,45 @@ export function dBToLinear(db: number): number {
 	return 10 ** (clampDb(db) / 20);
 }
 
+function clampFadeSeconds(value: number | undefined, maxDuration: number): number {
+	if (!Number.isFinite(value)) {
+		return 0;
+	}
+
+	return Math.min(Math.max(0, value ?? 0), Math.max(0, maxDuration));
+}
+
+function resolveFadeMultiplier({
+	element,
+	localTime,
+}: {
+	element: AudioCapableElement;
+	localTime: number;
+}): number {
+	const duration = Math.max(0, element.duration / TICKS_PER_SECOND);
+	if (duration <= 0) {
+		return 1;
+	}
+
+	const fadeIn = clampFadeSeconds(element.fadeIn, duration);
+	const fadeOut = clampFadeSeconds(element.fadeOut, duration);
+
+	let multiplier = 1;
+	if (fadeIn > 0 && localTime < fadeIn) {
+		multiplier = Math.min(multiplier, Math.max(0, localTime / fadeIn));
+	}
+
+	const fadeOutStart = Math.max(0, duration - fadeOut);
+	if (fadeOut > 0 && localTime > fadeOutStart) {
+		multiplier = Math.min(
+			multiplier,
+			Math.max(0, (duration - localTime) / fadeOut),
+		);
+	}
+
+	return multiplier;
+}
+
 export function hasAnimatedVolume({
 	element,
 }: {
@@ -32,7 +72,21 @@ export function hasAnimatedVolume({
 	});
 }
 
-import { TICKS_PER_SECOND } from "@/lib/wasm";
+export function hasAudioFade({
+	element,
+}: {
+	element: AudioCapableElement;
+}): boolean {
+	const duration = Math.max(0, element.duration);
+	if (duration <= 0) {
+		return false;
+	}
+
+	return (
+		clampFadeSeconds(element.fadeIn, duration) > 0 ||
+		clampFadeSeconds(element.fadeOut, duration) > 0
+	);
+}
 
 export function resolveEffectiveAudioGain({
 	element,
@@ -54,7 +108,7 @@ export function resolveEffectiveAudioGain({
 		localTime: Math.round(localTime * TICKS_PER_SECOND),
 	});
 
-	return dBToLinear(resolvedDb);
+	return dBToLinear(resolvedDb) * resolveFadeMultiplier({ element, localTime });
 }
 
 export function buildAudioGainAutomation({

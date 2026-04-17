@@ -1,4 +1,7 @@
-import { buildGaussianBlurPasses, intensityToSigma } from "@/lib/effects/definitions/blur";
+import {
+	buildGaussianBlurPasses,
+	intensityToSigma,
+} from "@/lib/effects/definitions/blur";
 import { mediaTimeToSeconds } from "opencut-wasm";
 import { getSourceTimeAtClipTime } from "@/lib/retime";
 import { videoCache } from "@/services/video-cache/service";
@@ -42,14 +45,22 @@ export class BlurBackgroundNode extends BaseNode<BlurBackgroundNodeParams> {
 		return localTime >= 0 && localTime < this.params.duration;
 	}
 
+	private normalizeMediaTickTime(time: number): number {
+		if (!Number.isFinite(time)) {
+			return 0;
+		}
+
+		return Math.max(0, Math.round(time));
+	}
+
 	private getSourceLocalTime({ time }: { time: number }): number {
 		const clipTime = time - this.params.timeOffset;
-		return (
+		return this.normalizeMediaTickTime(
 			this.params.trimStart +
-			getSourceTimeAtClipTime({
-				clipTime,
-				retime: this.params.retime,
-			})
+				getSourceTimeAtClipTime({
+					clipTime,
+					retime: this.params.retime,
+				}),
 		);
 	}
 
@@ -127,8 +138,16 @@ export class BlurBackgroundNode extends BaseNode<BlurBackgroundNodeParams> {
 		);
 
 		const passes = buildGaussianBlurPasses({
-			sigmaX: intensityToSigma({ intensity: this.params.blurIntensity, resolution: renderer.width, reference: 1920 }),
-			sigmaY: intensityToSigma({ intensity: this.params.blurIntensity, resolution: renderer.height, reference: 1080 }),
+			sigmaX: intensityToSigma({
+				intensity: this.params.blurIntensity,
+				resolution: renderer.width,
+				reference: 1920,
+			}),
+			sigmaY: intensityToSigma({
+				intensity: this.params.blurIntensity,
+				resolution: renderer.height,
+				reference: 1080,
+			}),
 		});
 		const effectResult = gpuRenderer.applyEffect({
 			source: offscreen as CanvasImageSource,

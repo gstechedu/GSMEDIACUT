@@ -30,6 +30,12 @@ Open one of these in Visual Studio:
 
 - If `apps/web` is already running, the desktop wrapper loads it directly.
 - If not, the wrapper shows a fallback screen and can start `apps/web`.
+- On startup, the wrapper creates two visible folders in the current Windows user profile:
+  - `C:\Users\<you>\GSMEDIACUT`
+    App shell data, including the WebView2 browser profile used by the editor.
+  - `C:\Users\<you>\GSMEDIACUT Drafts`
+    Visible draft workspace with `Projects`, `Media`, `Exports`, and `Temp` subfolders.
+- The desktop window exposes quick buttons to open both folders.
 
 ## Important
 

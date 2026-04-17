@@ -25,6 +25,8 @@ const IS_AT_ACTUAL_SIZE_EPSILON = 0.01;
 
 interface PreviewViewportContextValue {
 	canPan: boolean;
+	canvasHeight: number;
+	canvasWidth: number;
 	isAtFit: boolean;
 	isAtActualSize: boolean;
 	isPanning: boolean;
@@ -501,6 +503,8 @@ export function usePreviewViewportState({
 	return useMemo(
 		() => ({
 			canPan,
+			canvasHeight,
+			canvasWidth,
 			isAtActualSize: isNearlyEqual({
 				leftValue: viewportScale,
 				rightValue: 1,
@@ -536,6 +540,8 @@ export function usePreviewViewportState({
 		}),
 		[
 			canPan,
+			canvasHeight,
+			canvasWidth,
 			viewportScale,
 			zoom,
 			isPanning,

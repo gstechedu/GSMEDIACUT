@@ -24,6 +24,14 @@ export class PlaybackManager {
 		});
 	}
 
+	private normalizeTime(time: number): number {
+		if (!Number.isFinite(time)) {
+			return 0;
+		}
+
+		return Math.max(0, Math.round(time));
+	}
+
 	play(): void {
 		const maxTime = this.editor.timeline.getTotalDuration();
 
@@ -54,7 +62,10 @@ export class PlaybackManager {
 
 	seek({ time }: { time: number }): void {
 		const maxTime = this.editor.timeline.getTotalDuration();
-		this.currentTime = Math.max(0, Math.min(maxTime, time));
+		this.currentTime = Math.max(
+			0,
+			Math.min(this.normalizeTime(maxTime), this.normalizeTime(time)),
+		);
 		if (this.isPlaying) {
 			this.playbackStartWallTime = performance.now();
 			this.playbackStartTime = this.currentTime;
@@ -158,9 +169,13 @@ export class PlaybackManager {
 		if (!this.isPlaying) return;
 
 		const fps = this.editor.project.getActive()?.settings.fps;
-		const elapsedSeconds = (performance.now() - this.playbackStartWallTime) / 1000;
-		const rawTime = this.playbackStartTime + Math.round(elapsedSeconds * TICKS_PER_SECOND);
-		const newTime = fps ? (roundToFrame({ time: rawTime, rate: fps }) ?? rawTime) : rawTime;
+		const elapsedSeconds =
+			(performance.now() - this.playbackStartWallTime) / 1000;
+		const rawTime =
+			this.playbackStartTime + Math.round(elapsedSeconds * TICKS_PER_SECOND);
+		const newTime = fps
+			? (roundToFrame({ time: rawTime, rate: fps }) ?? rawTime)
+			: rawTime;
 		const maxTime = this.editor.timeline.getTotalDuration();
 
 		if (maxTime > 0 && newTime >= maxTime) {

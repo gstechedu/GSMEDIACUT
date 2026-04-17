@@ -9,6 +9,7 @@ export interface StudioFeatureCard {
 		| "stickers"
 		| "effects"
 		| "transitions"
+		| "transcription"
 		| "captions"
 		| "settings";
 	status: "ready" | "in-progress" | "planned";
@@ -54,6 +55,14 @@ export const STUDIO_FEATURE_CARDS: StudioFeatureCard[] = [
 		description:
 			"Multi-track editing, drag-and-drop media, preview, trim, and keyframes.",
 		tab: "media",
+		status: "ready",
+	},
+	{
+		id: "transcription",
+		title: "Transcription",
+		description:
+			"Offline local transcript workflow with style presets and subtitle generation.",
+		tab: "transcription",
 		status: "ready",
 	},
 	{

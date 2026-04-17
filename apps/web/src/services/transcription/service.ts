@@ -30,6 +30,11 @@ class TranscriptionService {
 		onProgress?: ProgressCallback;
 	}): Promise<TranscriptionResult> {
 		await this.ensureWorker({ modelId, onProgress });
+		onProgress?.({
+			status: "transcribing",
+			progress: 0,
+			message: "Transcribing audio...",
+		});
 
 		return new Promise((resolve, reject) => {
 			if (!this.worker) {
@@ -54,7 +59,8 @@ class TranscriptionService {
 						resolve({
 							text: response.text,
 							segments: response.segments,
-							language,
+							language: response.language,
+							languageConfidence: response.languageConfidence,
 						});
 						break;
 

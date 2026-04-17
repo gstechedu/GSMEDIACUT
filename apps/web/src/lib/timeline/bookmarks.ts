@@ -2,6 +2,14 @@ import type { Bookmark } from "@/lib/timeline";
 import type { FrameRate } from "opencut-wasm";
 import { roundToFrame } from "opencut-wasm";
 
+function normalizeTimelineTickTime(time: number): number {
+	if (!Number.isFinite(time)) {
+		return 0;
+	}
+
+	return Math.max(0, Math.round(time));
+}
+
 function bookmarkTimeEqual({
 	bookmarkTime,
 	frameTime,
@@ -113,7 +121,8 @@ export function getFrameTime({
 	time: number;
 	fps: FrameRate;
 }): number {
-	return roundToFrame({ time, rate: fps }) ?? time;
+	const normalizedTime = normalizeTimelineTickTime(time);
+	return roundToFrame({ time: normalizedTime, rate: fps }) ?? normalizedTime;
 }
 
 export function getBookmarkAtTime({

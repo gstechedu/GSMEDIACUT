@@ -74,6 +74,9 @@ import { DragLine } from "./drag-line";
 import { invokeAction } from "@/lib/actions";
 import { resolveTimelineElementIntersections } from "./selection-hit-testing";
 import { cn } from "@/utils/ui";
+import { TimelineTransitionPanel } from "./transition-panel";
+import { usePropertiesStore } from "../properties/stores/properties-store";
+import { hasMediaId } from "@/lib/timeline/element-utils";
 
 const TRACKS_CONTAINER_MAX_HEIGHT = 800;
 const FALLBACK_CONTAINER_WIDTH = 1000;
@@ -138,6 +141,10 @@ export function Timeline() {
 	const [currentSnapPoint, setCurrentSnapPoint] = useState<SnapPoint | null>(
 		null,
 	);
+	const editorMode = useTimelineStore((state) => state.editorMode);
+	const setEditorMode = useTimelineStore((state) => state.setEditorMode);
+	const mediaAssets = useEditor((currentEditor) => currentEditor.media.getAssets());
+	const activeTabPerType = usePropertiesStore((state) => state.activeTabPerType);
 
 	const handleSnapPointChange = useCallback((snapPoint: SnapPoint | null) => {
 		setCurrentSnapPoint(snapPoint);
@@ -151,6 +158,48 @@ export function Timeline() {
 		},
 		[],
 	);
+
+	useEffect(() => {
+		if (selectedElements.length !== 1) {
+			if (editorMode === "transition") {
+				setEditorMode("timeline");
+			}
+			return;
+		}
+
+		const selectedElementWithTrack =
+			editor.timeline.getElementsWithTracks({
+				elements: selectedElements,
+			})[0] ?? null;
+		const selectedElement = selectedElementWithTrack?.element ?? null;
+		if (!selectedElement) {
+			if (editorMode === "transition") {
+				setEditorMode("timeline");
+			}
+			return;
+		}
+
+		const activeTab = activeTabPerType[selectedElement.type];
+		const mediaAsset =
+			hasMediaId(selectedElement)
+				? mediaAssets.find((asset) => asset.id === selectedElement.mediaId) ?? null
+				: null;
+		const canStayInTransitionMode =
+			activeTab === "transition" &&
+			(selectedElement.type === "audio" ||
+				(selectedElement.type === "video" && mediaAsset?.hasAudio !== false));
+
+		if (!canStayInTransitionMode && editorMode === "transition") {
+			setEditorMode("timeline");
+		}
+	}, [
+		activeTabPerType,
+		editor,
+		editorMode,
+		mediaAssets,
+		selectedElements,
+		setEditorMode,
+	]);
 
 	const timelineDuration = timeline.getTotalDuration() || 0;
 	const normalizedTimelineDuration = Math.round(timelineDuration);
@@ -174,7 +223,7 @@ export function Timeline() {
 
 	useEffect(() => {
 		const handleTimelineFitRequested = () => {
-			setZoomLevel({ zoom: minZoomLevel });
+			setZoomLevel(minZoomLevel);
 			if (tracksScrollRef.current) {
 				tracksScrollRef.current.scrollLeft = 0;
 			}
@@ -445,163 +494,171 @@ export function Timeline() {
 				zoomLevel={zoomLevel}
 				minZoom={minZoomLevel}
 				setZoomLevel={({ zoom }) => setZoomLevel(zoom)}
+				editorMode={editorMode}
+				onEditorModeChange={setEditorMode}
 			/>
 
-			<div className="relative flex flex-1 overflow-hidden" ref={timelineRef}>
-				<TrackLabelsPanel
-					trackLabelsRef={trackLabelsRef}
-					trackLabelsScrollRef={trackLabelsScrollRef}
-					timelineHeaderHeight={timelineHeaderHeight}
-					hasHorizontalScrollbar={hasHorizontalScrollbar}
-				/>
-
-				<div
-					className="relative isolate flex flex-1 flex-col overflow-hidden"
-					ref={tracksContainerRef}
-				>
-					<SelectionBox
-						startPos={selectionBox?.startPos || null}
-						currentPos={selectionBox?.currentPos || null}
-						containerRef={tracksContainerRef}
-						isActive={selectionBox?.isActive || false}
-					/>
-					<DragLine
-						dropTarget={dropTarget}
-						tracks={tracks}
-						isVisible={isDragOver && !dropTarget?.targetElement}
-						headerHeight={timelineHeaderHeight}
-					/>
-					<DragLine
-						dropTarget={dragDropTarget}
-						tracks={tracks}
-						isVisible={dragState.isDragging}
-						headerHeight={timelineHeaderHeight}
-					/>
-
-					<div ref={rulerScrollRef} className="shrink-0 overflow-hidden">
-						<div
-							ref={timelineHeaderRef}
-							className="flex flex-col"
-							style={{ width: `${dynamicTimelineWidth}px` }}
-						>
-							<TimelineRuler
-								zoomLevel={zoomLevel}
-								dynamicTimelineWidth={dynamicTimelineWidth}
-								rulerRef={rulerRef}
-								tracksScrollRef={rulerScrollRef}
-								handleWheel={handleWheel}
-								handleTimelineContentClick={handleRulerClick}
-								handleRulerTrackingMouseDown={handleRulerMouseDown}
-								handleRulerMouseDown={handlePlayheadRulerMouseDown}
-							/>
-							<TimelineBookmarksRow
-								zoomLevel={zoomLevel}
-								dynamicTimelineWidth={dynamicTimelineWidth}
-								dragState={bookmarkDragState}
-								onBookmarkMouseDown={handleBookmarkMouseDown}
-								handleWheel={handleWheel}
-								handleTimelineContentClick={handleRulerClick}
-								handleRulerTrackingMouseDown={handleRulerMouseDown}
-								handleRulerMouseDown={handlePlayheadRulerMouseDown}
-							/>
-						</div>
-					</div>
-
-					<ScrollArea
-						className="flex-1"
-						ref={tracksScrollRef}
-						onScroll={() => {
-							syncFollowers();
-							saveScrollPosition();
-						}}
-					>
-						<div
-							className="flex min-h-full flex-col"
-							style={{ width: `${dynamicTimelineWidth}px` }}
-						>
-							{/* biome-ignore lint/a11y/noStaticElementInteractions: canvas seek surface; keyboard seeking is handled by the global keybindings system */}
-							{/* biome-ignore lint/a11y/useKeyWithClickEvents: canvas seek surface; keyboard seeking is handled by the global keybindings system */}
-							<div
-								className="relative shrink-0"
-								style={{
-									height: `${
-										Math.max(
-											TRACKS_CONTAINER_HEIGHT.min,
-											Math.min(
-												TRACKS_CONTAINER_HEIGHT.max,
-												getTotalTracksHeight({ tracks }),
-											),
-										) + TIMELINE_CONTENT_TOP_PADDING_PX
-									}px`,
-								}}
-								onMouseDown={(event) => {
-									const isDirectTarget = event.target === event.currentTarget;
-									if (!isDirectTarget) return;
-									event.stopPropagation();
-									handleTracksMouseDown(event);
-									handleSelectionMouseDown(event);
-								}}
-								onClick={(event) => {
-									const isDirectTarget = event.target === event.currentTarget;
-									if (!isDirectTarget) return;
-									event.stopPropagation();
-									handleTracksClick(event);
-								}}
-							>
-								{tracks.length > 0 && (
-									<TimelineTrackRows
-										dragElementId={dragState.elementId}
-										mainTrackId={mainTrackId}
-										zoomLevel={zoomLevel}
-										dragState={dragState}
-										tracksScrollRef={tracksScrollRef}
-										lastMouseXRef={lastMouseXRef}
-										onSnapPointChange={handleSnapPointChange}
-										onResizeStateChange={handleResizeStateChange}
-										onElementMouseDown={handleElementMouseDown}
-										onElementClick={handleElementClick}
-										onTrackMouseDown={(event) => {
-											handleSelectionMouseDown(event);
-											handleTracksMouseDown(event);
-										}}
-										onTrackMouseUp={handleTracksClick}
-										shouldIgnoreClick={shouldIgnoreClick}
-										isDragOver={isDragOver}
-										dropTarget={dropTarget}
-									/>
-								)}
-							</div>
-							<TimelineGutter
-								onMouseDown={(event) => {
-									handleTracksMouseDown(event);
-									handleSelectionMouseDown(event);
-								}}
-								onClick={handleTracksClick}
-							/>
-						</div>
-					</ScrollArea>
-
-					<TimelinePlayhead
-						zoomLevel={zoomLevel}
+			{editorMode === "transition" ? (
+				<div className="min-h-0 flex-1 overflow-hidden">
+					<TimelineTransitionPanel />
+				</div>
+			) : (
+				<div className="relative flex flex-1 overflow-hidden" ref={timelineRef}>
+					<TrackLabelsPanel
+						trackLabelsRef={trackLabelsRef}
+						trackLabelsScrollRef={trackLabelsScrollRef}
+						timelineHeaderHeight={timelineHeaderHeight}
 						hasHorizontalScrollbar={hasHorizontalScrollbar}
-						rulerRef={rulerRef}
-						rulerScrollRef={rulerScrollRef}
-						tracksScrollRef={tracksScrollRef}
+					/>
+
+					<div
+						className="relative isolate flex flex-1 flex-col overflow-hidden"
+						ref={tracksContainerRef}
+					>
+						<SelectionBox
+							startPos={selectionBox?.startPos || null}
+							currentPos={selectionBox?.currentPos || null}
+							containerRef={tracksContainerRef}
+							isActive={selectionBox?.isActive || false}
+						/>
+						<DragLine
+							dropTarget={dropTarget}
+							tracks={tracks}
+							isVisible={isDragOver && !dropTarget?.targetElement}
+							headerHeight={timelineHeaderHeight}
+						/>
+						<DragLine
+							dropTarget={dragDropTarget}
+							tracks={tracks}
+							isVisible={dragState.isDragging}
+							headerHeight={timelineHeaderHeight}
+						/>
+
+						<div ref={rulerScrollRef} className="shrink-0 overflow-hidden">
+							<div
+								ref={timelineHeaderRef}
+								className="flex flex-col"
+								style={{ width: `${dynamicTimelineWidth}px` }}
+							>
+								<TimelineRuler
+									zoomLevel={zoomLevel}
+									dynamicTimelineWidth={dynamicTimelineWidth}
+									rulerRef={rulerRef}
+									tracksScrollRef={rulerScrollRef}
+									handleWheel={handleWheel}
+									handleTimelineContentClick={handleRulerClick}
+									handleRulerTrackingMouseDown={handleRulerMouseDown}
+									handleRulerMouseDown={handlePlayheadRulerMouseDown}
+								/>
+								<TimelineBookmarksRow
+									zoomLevel={zoomLevel}
+									dynamicTimelineWidth={dynamicTimelineWidth}
+									dragState={bookmarkDragState}
+									onBookmarkMouseDown={handleBookmarkMouseDown}
+									handleWheel={handleWheel}
+									handleTimelineContentClick={handleRulerClick}
+									handleRulerTrackingMouseDown={handleRulerMouseDown}
+									handleRulerMouseDown={handlePlayheadRulerMouseDown}
+								/>
+							</div>
+						</div>
+
+						<ScrollArea
+							className="flex-1"
+							ref={tracksScrollRef}
+							onScroll={() => {
+								syncFollowers();
+								saveScrollPosition();
+							}}
+						>
+							<div
+								className="flex min-h-full flex-col"
+								style={{ width: `${dynamicTimelineWidth}px` }}
+							>
+								{/* biome-ignore lint/a11y/noStaticElementInteractions: canvas seek surface; keyboard seeking is handled by the global keybindings system */}
+								{/* biome-ignore lint/a11y/useKeyWithClickEvents: canvas seek surface; keyboard seeking is handled by the global keybindings system */}
+								<div
+									className="relative shrink-0"
+									style={{
+										height: `${
+											Math.max(
+												TRACKS_CONTAINER_HEIGHT.min,
+												Math.min(
+													TRACKS_CONTAINER_HEIGHT.max,
+													getTotalTracksHeight({ tracks }),
+												),
+											) + TIMELINE_CONTENT_TOP_PADDING_PX
+										}px`,
+									}}
+									onMouseDown={(event) => {
+										const isDirectTarget = event.target === event.currentTarget;
+										if (!isDirectTarget) return;
+										event.stopPropagation();
+										handleTracksMouseDown(event);
+										handleSelectionMouseDown(event);
+									}}
+									onClick={(event) => {
+										const isDirectTarget = event.target === event.currentTarget;
+										if (!isDirectTarget) return;
+										event.stopPropagation();
+										handleTracksClick(event);
+									}}
+								>
+									{tracks.length > 0 && (
+										<TimelineTrackRows
+											dragElementId={dragState.elementId}
+											mainTrackId={mainTrackId}
+											zoomLevel={zoomLevel}
+											dragState={dragState}
+											tracksScrollRef={tracksScrollRef}
+											lastMouseXRef={lastMouseXRef}
+											onSnapPointChange={handleSnapPointChange}
+											onResizeStateChange={handleResizeStateChange}
+											onElementMouseDown={handleElementMouseDown}
+											onElementClick={handleElementClick}
+											onTrackMouseDown={(event) => {
+												handleSelectionMouseDown(event);
+												handleTracksMouseDown(event);
+											}}
+											onTrackMouseUp={handleTracksClick}
+											shouldIgnoreClick={shouldIgnoreClick}
+											isDragOver={isDragOver}
+											dropTarget={dropTarget}
+										/>
+									)}
+								</div>
+								<TimelineGutter
+									onMouseDown={(event) => {
+										handleTracksMouseDown(event);
+										handleSelectionMouseDown(event);
+									}}
+									onClick={handleTracksClick}
+								/>
+							</div>
+						</ScrollArea>
+
+						<TimelinePlayhead
+							zoomLevel={zoomLevel}
+							hasHorizontalScrollbar={hasHorizontalScrollbar}
+							rulerRef={rulerRef}
+							rulerScrollRef={rulerScrollRef}
+							tracksScrollRef={tracksScrollRef}
+							timelineRef={timelineRef}
+							playheadRef={playheadRef}
+							isSnappingToPlayhead={
+								showSnapIndicator && currentSnapPoint?.type === "playhead"
+							}
+						/>
+					</div>
+					<SnapIndicator
+						snapPoint={currentSnapPoint}
+						zoomLevel={zoomLevel}
 						timelineRef={timelineRef}
-						playheadRef={playheadRef}
-						isSnappingToPlayhead={
-							showSnapIndicator && currentSnapPoint?.type === "playhead"
-						}
+						tracksScrollRef={tracksScrollRef}
+						isVisible={showSnapIndicator}
 					/>
 				</div>
-				<SnapIndicator
-					snapPoint={currentSnapPoint}
-					zoomLevel={zoomLevel}
-					timelineRef={timelineRef}
-					tracksScrollRef={tracksScrollRef}
-					isVisible={showSnapIndicator}
-				/>
-			</div>
+			)}
 		</section>
 	);
 }

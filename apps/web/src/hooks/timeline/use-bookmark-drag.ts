@@ -59,6 +59,14 @@ export function useBookmarkDrag({
 	const pendingDragRef = useRef<PendingBookmarkDrag | null>(null);
 	const lastMouseXRef = useRef(0);
 
+	const normalizeTimelineTime = useCallback((time: number) => {
+		if (!Number.isFinite(time)) {
+			return 0;
+		}
+
+		return Math.max(0, Math.round(time));
+	}, []);
+
 	const startDrag = useCallback(
 		({
 			bookmarkTime,
@@ -113,7 +121,14 @@ export function useBookmarkDrag({
 				snapPoint: result.snapPoint,
 			};
 		},
-		[snappingEnabled, tracks, playheadTime, bookmarks, zoomLevel, isShiftHeldRef],
+		[
+			snappingEnabled,
+			tracks,
+			playheadTime,
+			bookmarks,
+			zoomLevel,
+			isShiftHeldRef,
+		],
 	);
 
 	useEffect(() => {
@@ -148,7 +163,14 @@ export function useBookmarkDrag({
 					zoomLevel,
 					scrollLeft,
 				});
-			const frameSnappedTime = roundToFrame({ time: Math.max(0, Math.min(mouseTime, duration)), rate: activeProject.settings.fps }) ?? Math.max(0, Math.min(mouseTime, duration));
+				const normalizedMouseTime = normalizeTimelineTime(
+					Math.max(0, Math.min(mouseTime, duration)),
+				);
+				const frameSnappedTime =
+					roundToFrame({
+						time: normalizedMouseTime,
+						rate: activeProject.settings.fps,
+					}) ?? normalizedMouseTime;
 				const { snappedTime: initialTime } = getSnapResult({
 					rawTime: frameSnappedTime,
 					excludeBookmarkTime: bookmarkTime,
@@ -175,10 +197,14 @@ export function useBookmarkDrag({
 				zoomLevel,
 				scrollLeft,
 			});
-			const clampedTime = Math.max(0, Math.min(mouseTime, duration));
-		const frameSnappedTime = roundToFrame({ time: clampedTime, rate: activeProject.settings.fps }) ?? clampedTime;
-		const snapResult = getSnapResult({
-			rawTime: frameSnappedTime,
+			const clampedTime = normalizeTimelineTime(
+				Math.max(0, Math.min(mouseTime, duration)),
+			);
+			const frameSnappedTime =
+				roundToFrame({ time: clampedTime, rate: activeProject.settings.fps }) ??
+				clampedTime;
+			const snapResult = getSnapResult({
+				rawTime: frameSnappedTime,
 				excludeBookmarkTime: dragState.bookmarkTime,
 			});
 
@@ -201,6 +227,7 @@ export function useBookmarkDrag({
 		isPendingDrag,
 		startDrag,
 		getSnapResult,
+		normalizeTimelineTime,
 		onSnapPointChange,
 	]);
 
@@ -214,9 +241,8 @@ export function useBookmarkDrag({
 				return;
 			}
 
-			const clampedTime = Math.max(
-				0,
-				Math.min(dragState.currentTime, duration),
+			const clampedTime = normalizeTimelineTime(
+				Math.max(0, Math.min(dragState.currentTime, duration)),
 			);
 
 			editor.scenes.moveBookmark({
@@ -236,6 +262,7 @@ export function useBookmarkDrag({
 		dragState.currentTime,
 		duration,
 		endDrag,
+		normalizeTimelineTime,
 		onSnapPointChange,
 		editor.scenes,
 	]);

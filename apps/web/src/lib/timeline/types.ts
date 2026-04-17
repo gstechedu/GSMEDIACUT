@@ -87,6 +87,8 @@ export interface RetimeConfig {
 interface BaseAudioElement extends BaseTimelineElement {
 	type: "audio";
 	volume: number;
+	fadeIn?: number;
+	fadeOut?: number;
 	muted?: boolean;
 	buffer?: AudioBuffer;
 	retime?: RetimeConfig;
@@ -119,6 +121,8 @@ export interface VideoElement extends BaseTimelineElement {
 	type: "video";
 	mediaId: string;
 	volume?: number;
+	fadeIn?: number;
+	fadeOut?: number;
 	muted?: boolean;
 	isSourceAudioEnabled?: boolean;
 	hidden?: boolean;
@@ -205,7 +209,9 @@ export interface EffectElement extends BaseTimelineElement {
 export type ElementUpdatePatch =
 	| { transform: Transform }
 	| { opacity: number }
-	| { volume: number };
+	| { volume: number }
+	| { fadeIn: number }
+	| { fadeOut: number };
 
 export type TimelineElement =
 	| AudioElement

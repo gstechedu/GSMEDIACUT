@@ -1,5 +1,6 @@
 import { useEditor } from "@/hooks/use-editor";
 import { useElementSelection } from "@/hooks/timeline/element/use-element-selection";
+import { useEffect } from "react";
 import {
 	TooltipProvider,
 	Tooltip,
@@ -43,21 +44,27 @@ import {
 	Layers01Icon,
 	Chart03Icon,
 	Unlink02Icon,
+	ArrowRightDoubleIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { OcRippleIcon } from "@/components/icons";
 import { GraphEditorPopover } from "./graph-editor/popover";
 import { PopoverTrigger } from "@/components/ui/popover";
 import { useGraphEditorController } from "./graph-editor/use-controller";
+import { usePropertiesStore } from "../properties/stores/properties-store";
 
 export function TimelineToolbar({
 	zoomLevel,
 	minZoom,
 	setZoomLevel,
+	editorMode,
+	onEditorModeChange,
 }: {
 	zoomLevel: number;
 	minZoom: number;
 	setZoomLevel: ({ zoom }: { zoom: number }) => void;
+	editorMode: "timeline" | "transition";
+	onEditorModeChange: (mode: "timeline" | "transition") => void;
 }) {
 	const handleZoom = ({ direction }: { direction: "in" | "out" }) => {
 		const newZoomLevel =
@@ -70,7 +77,10 @@ export function TimelineToolbar({
 	return (
 		<ScrollArea className="scrollbar-hidden">
 			<div className="flex h-10 items-center justify-between border-b px-2 py-1">
-				<ToolbarLeftSection />
+				<ToolbarLeftSection
+					editorMode={editorMode}
+					onEditorModeChange={onEditorModeChange}
+				/>
 
 				<SceneSelector />
 
@@ -85,7 +95,13 @@ export function TimelineToolbar({
 	);
 }
 
-function ToolbarLeftSection() {
+function ToolbarLeftSection({
+	editorMode,
+	onEditorModeChange,
+}: {
+	editorMode: "timeline" | "transition";
+	onEditorModeChange: (mode: "timeline" | "transition") => void;
+}) {
 	const editor = useEditor();
 	const mediaAssets = useEditor((currentEditor) =>
 		currentEditor.media.getAssets(),
@@ -127,6 +143,21 @@ function ToolbarLeftSection() {
 		isSourceAudioSeparated({
 			element: selectedElement.element,
 		});
+	const activePropertiesTab = usePropertiesStore((state) =>
+		selectedElement ? state.activeTabPerType[selectedElement.element.type] : null,
+	);
+	const canShowTransitionToolbarButton =
+		!!selectedElement &&
+		(selectedElement.element.type === "audio" ||
+			(selectedElement.element.type === "video" &&
+				selectedMediaAsset?.hasAudio !== false)) &&
+		activePropertiesTab === "transition";
+
+	useEffect(() => {
+		if (!canShowTransitionToolbarButton && editorMode === "transition") {
+			onEditorModeChange("timeline");
+		}
+	}, [canShowTransitionToolbarButton, editorMode, onEditorModeChange]);
 
 	const handleAction = ({
 		action,
@@ -240,6 +271,23 @@ function ToolbarLeftSection() {
 						}
 					/>
 				</GraphEditorPopover>
+
+				{canShowTransitionToolbarButton && (
+					<ToolbarButton
+						icon={<HugeiconsIcon icon={ArrowRightDoubleIcon} />}
+						tooltip={
+							editorMode === "transition"
+								? "Back to timeline"
+								: "Open transition panel"
+						}
+						onClick={() =>
+							onEditorModeChange(
+								editorMode === "transition" ? "timeline" : "transition",
+							)
+						}
+						isActive={editorMode === "transition"}
+					/>
+				)}
 			</TooltipProvider>
 		</div>
 	);

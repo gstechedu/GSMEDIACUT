@@ -252,6 +252,8 @@ function buildVideoElement({
 		opacity: DEFAULTS.element.opacity,
 		blendMode: DEFAULTS.element.blendMode,
 		volume: DEFAULTS.element.volume,
+		fadeIn: DEFAULTS.element.fadeIn,
+		fadeOut: DEFAULTS.element.fadeOut,
 	};
 }
 
@@ -308,6 +310,8 @@ function buildUploadAudioElement({
 		trimEnd: 0,
 		sourceDuration: duration,
 		volume: DEFAULTS.element.volume,
+		fadeIn: DEFAULTS.element.fadeIn,
+		fadeOut: DEFAULTS.element.fadeOut,
 		muted: false,
 	};
 	if (buffer) {
@@ -371,6 +375,8 @@ export function buildLibraryAudioElement({
 		trimEnd: 0,
 		sourceDuration: duration,
 		volume: DEFAULTS.element.volume,
+		fadeIn: DEFAULTS.element.fadeIn,
+		fadeOut: DEFAULTS.element.fadeOut,
 		muted: false,
 	};
 	if (buffer) {

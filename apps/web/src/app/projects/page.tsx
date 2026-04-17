@@ -87,6 +87,42 @@ const VIEW_MODE_OPTIONS = [
 	{ mode: "list" as const, icon: LeftToRightListDashIcon, label: "List view" },
 ];
 
+function isExternalProject(project: TProjectMetadata): boolean {
+	return project.source === "external-draft";
+}
+
+function shouldBypassImageOptimizer(src: string): boolean {
+	return src.startsWith("/api/local-drafts/thumbnail");
+}
+
+async function openExternalDraftFolder({
+	project,
+}: {
+	project: TProjectMetadata;
+}) {
+	if (!project.externalPath) {
+		toast.error("Draft folder path is missing");
+		return;
+	}
+
+	const response = await fetch("/api/local-drafts/open", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			folderPath: project.externalPath,
+		}),
+	});
+
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as
+			| { error?: string }
+			| null;
+		throw new Error(payload?.error || "Failed to open draft folder");
+	}
+}
+
 export default function ProjectsPage() {
 	const { searchQuery, sortKey, sortOrder, viewMode } = useProjectsStore();
 	const editor = useEditor();
@@ -97,6 +133,9 @@ export default function ProjectsPage() {
 	const projectsToDisplay = useEditor((e) =>
 		e.project.getFilteredAndSortedProjects({ searchQuery, sortOption }),
 	);
+	const selectableProjectIds = projectsToDisplay
+		.filter((project) => !isExternalProject(project))
+		.map((project) => project.id);
 
 	useEffect(() => {
 		if (!editor.project.getIsInitialized()) {
@@ -109,7 +148,7 @@ export default function ProjectsPage() {
 			<MigrationDialog />
 			<StoragePersistenceDialog />
 			<ProjectsHeader />
-			<ProjectsToolbar projectIds={projectsToDisplay.map((p) => p.id)} />
+			<ProjectsToolbar projectIds={selectableProjectIds} />
 			<main className="mx-auto px-4 pt-2 pb-6 flex flex-col gap-4">
 				{isLoading || !isInitialized ? (
 					<ProjectsSkeleton />
@@ -551,6 +590,7 @@ function ProjectItem({
 	const durationLabel = formatProjectDuration({ duration: project.duration });
 	const isMultiSelect = selectedProjectCount > 1;
 	const isGridView = viewMode === "grid";
+	const isExternalDraft = isExternalProject(project);
 
 	const handleRename = () => setIsRenameDialogOpen(true);
 	const handleDuplicate = async () => {
@@ -561,6 +601,16 @@ function ProjectItem({
 	const handleDeleteConfirm = async () => {
 		await deleteProjects({ editor, ids: [project.id] });
 		setIsDeleteDialogOpen(false);
+	};
+	const handleOpenExternalDraft = async () => {
+		try {
+			await openExternalDraftFolder({ project });
+		} catch (error) {
+			toast.error("Failed to open draft folder", {
+				description:
+					error instanceof Error ? error.message : "Please try again",
+			});
+		}
 	};
 
 	const handleCheckboxChange = ({
@@ -586,6 +636,7 @@ function ProjectItem({
 							src={project.thumbnail}
 							alt="Project thumbnail"
 							fill
+							unoptimized={shouldBypassImageOptimizer(project.thumbnail)}
 							className="object-cover"
 						/>
 					) : (
@@ -600,6 +651,12 @@ function ProjectItem({
 						{durationLabel}
 					</div>
 				)}
+
+				{isExternalDraft && (
+					<div className="absolute top-2 right-2 bg-background/90 text-foreground text-[11px] font-medium px-2 py-1 rounded-sm border">
+						Local draft
+					</div>
+				)}
 			</div>
 
 			<CardContent className="flex flex-col gap-2 px-0 pt-4">
@@ -608,7 +665,12 @@ function ProjectItem({
 				</h3>
 				<div className="text-muted-foreground flex items-center gap-1.5 text-sm">
 					<HugeiconsIcon icon={Calendar04Icon} className="size-4" />
-					<span>Created {formatDate({ date: project.createdAt })}</span>
+					<span>
+						{isExternalDraft ? "Modified" : "Created"}{" "}
+						{formatDate({
+							date: isExternalDraft ? project.updatedAt : project.createdAt,
+						})}
+					</span>
 				</div>
 			</CardContent>
 		</Card>
@@ -622,6 +684,7 @@ function ProjectItem({
 						src={project.thumbnail}
 						alt="Project thumbnail"
 						fill
+						unoptimized={shouldBypassImageOptimizer(project.thumbnail)}
 						className="object-cover"
 					/>
 				) : (
@@ -651,24 +714,38 @@ function ProjectItem({
 				isSelected ? "bg-primary/5" : ""
 			}`}
 		>
-			<Checkbox
-				checked={isSelected}
-				onMouseDown={(event) => event.preventDefault()}
-				onClick={(event) => {
-					handleCheckboxChange({
-						checked: !isSelected,
-						shiftKey: event.shiftKey,
-					});
-				}}
-				onCheckedChange={() => {}}
-				className="size-5 shrink-0"
-			/>
+			{isExternalDraft ? (
+				<div className="size-5 shrink-0" />
+			) : (
+				<Checkbox
+					checked={isSelected}
+					onMouseDown={(event) => event.preventDefault()}
+					onClick={(event) => {
+						handleCheckboxChange({
+							checked: !isSelected,
+							shiftKey: event.shiftKey,
+						});
+					}}
+					onCheckedChange={() => {}}
+					className="size-5 shrink-0"
+				/>
+			)}
 
-			<Link href={`/editor/${project.id}`} className="flex-1 min-w-0">
-				{listRowContent}
-			</Link>
+			{isExternalDraft ? (
+				<button
+					type="button"
+					className="flex-1 min-w-0 text-left"
+					onClick={() => void handleOpenExternalDraft()}
+				>
+					{listRowContent}
+				</button>
+			) : (
+				<Link href={`/editor/${project.id}`} className="flex-1 min-w-0">
+					{listRowContent}
+				</Link>
+			)}
 
-			{!isMultiSelect && (
+			{!isMultiSelect && !isExternalDraft && (
 				<ProjectMenu
 					isOpen={isDropdownOpen}
 					onOpenChange={setIsDropdownOpen}
@@ -689,28 +766,40 @@ function ProjectItem({
 					<div className="group relative">
 						{isGridView ? (
 							<>
-								<Link href={`/editor/${project.id}`} className="block">
-									{gridContent}
-								</Link>
+								{isExternalDraft ? (
+									<button
+										type="button"
+										className="block w-full text-left"
+										onClick={() => void handleOpenExternalDraft()}
+									>
+										{gridContent}
+									</button>
+								) : (
+									<Link href={`/editor/${project.id}`} className="block">
+										{gridContent}
+									</Link>
+								)}
 
-								<Checkbox
-									checked={isSelected}
-									onMouseDown={(event) => event.preventDefault()}
-									onClick={(event) => {
-										handleCheckboxChange({
-											checked: !isSelected,
-											shiftKey: event.shiftKey,
-										});
-									}}
-									onCheckedChange={() => {}}
-									className={`absolute z-10 size-5 top-3 left-3 ${
-										isSelected || isDropdownOpen
-											? "opacity-100"
-											: "opacity-0 group-hover:opacity-100"
-									}`}
-								/>
+								{!isExternalDraft && (
+									<Checkbox
+										checked={isSelected}
+										onMouseDown={(event) => event.preventDefault()}
+										onClick={(event) => {
+											handleCheckboxChange({
+												checked: !isSelected,
+												shiftKey: event.shiftKey,
+											});
+										}}
+										onCheckedChange={() => {}}
+										className={`absolute z-10 size-5 top-3 left-3 ${
+											isSelected || isDropdownOpen
+												? "opacity-100"
+												: "opacity-0 group-hover:opacity-100"
+										}`}
+									/>
+								)}
 
-								{!isMultiSelect && (
+								{!isMultiSelect && !isExternalDraft && (
 									<ProjectMenu
 										isOpen={isDropdownOpen}
 										onOpenChange={setIsDropdownOpen}
@@ -726,30 +815,36 @@ function ProjectItem({
 						)}
 					</div>
 				</ContextMenuTrigger>
-				<ProjectContextMenuContent
-					onRenameClick={handleRename}
-					onDuplicateClick={handleDuplicate}
-					onDeleteClick={handleDeleteClick}
-					onInfoClick={handleInfoClick}
-				/>
+				{!isExternalDraft && (
+					<ProjectContextMenuContent
+						onRenameClick={handleRename}
+						onDuplicateClick={handleDuplicate}
+						onDeleteClick={handleDeleteClick}
+						onInfoClick={handleInfoClick}
+					/>
+				)}
 			</ContextMenu>
 
-			<RenameProjectDialog
-				isOpen={isRenameDialogOpen}
-				onOpenChange={setIsRenameDialogOpen}
-				projectName={project.name}
-				onConfirm={async (newName) => {
-					await renameProject({ editor, id: project.id, name: newName });
-					setIsRenameDialogOpen(false);
-				}}
-			/>
+			{!isExternalDraft && (
+				<RenameProjectDialog
+					isOpen={isRenameDialogOpen}
+					onOpenChange={setIsRenameDialogOpen}
+					projectName={project.name}
+					onConfirm={async (newName) => {
+						await renameProject({ editor, id: project.id, name: newName });
+						setIsRenameDialogOpen(false);
+					}}
+				/>
+			)}
 
-			<DeleteProjectDialog
-				isOpen={isDeleteDialogOpen}
-				onOpenChange={setIsDeleteDialogOpen}
-				projectNames={[project.name]}
-				onConfirm={handleDeleteConfirm}
-			/>
+			{!isExternalDraft && (
+				<DeleteProjectDialog
+					isOpen={isDeleteDialogOpen}
+					onOpenChange={setIsDeleteDialogOpen}
+					projectNames={[project.name]}
+					onConfirm={handleDeleteConfirm}
+				/>
+			)}
 
 			<ProjectInfoDialog
 				isOpen={isInfoDialogOpen}

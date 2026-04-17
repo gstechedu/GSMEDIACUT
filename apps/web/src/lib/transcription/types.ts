@@ -12,6 +12,7 @@ export interface TranscriptionResult {
 	text: string;
 	segments: TranscriptionSegment[];
 	language: string;
+	languageConfidence?: number;
 }
 
 export type TranscriptionStatus =

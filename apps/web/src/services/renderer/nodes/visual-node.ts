@@ -35,14 +35,22 @@ export interface VisualNodeParams {
 export abstract class VisualNode<
 	Params extends VisualNodeParams = VisualNodeParams,
 > extends BaseNode<Params> {
+	protected normalizeMediaTickTime(time: number): number {
+		if (!Number.isFinite(time)) {
+			return 0;
+		}
+
+		return Math.max(0, Math.round(time));
+	}
+
 	protected getSourceLocalTime({ time }: { time: number }): number {
 		const clipTime = time - this.params.timeOffset;
-		return (
+		return this.normalizeMediaTickTime(
 			this.params.trimStart +
-			getSourceTimeAtClipTime({
-				clipTime,
-				retime: this.params.retime,
-			})
+				getSourceTimeAtClipTime({
+					clipTime,
+					retime: this.params.retime,
+				}),
 		);
 	}
 

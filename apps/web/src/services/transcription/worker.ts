@@ -23,6 +23,8 @@ export type WorkerResponse =
 			type: "transcribe-complete";
 			text: string;
 			segments: TranscriptionSegment[];
+			language: string;
+			languageConfidence?: number;
 	  }
 	| { type: "transcribe-error"; error: string }
 	| { type: "cancelled" };
@@ -31,6 +33,22 @@ let transcriber: AutomaticSpeechRecognitionPipeline | null = null;
 let cancelled = false;
 let lastReportedProgress = -1;
 const fileBytes = new Map<string, { loaded: number; total: number }>();
+
+function inferLanguageFromText(text: string) {
+	if (/[\u1780-\u17ff]/.test(text)) {
+		return "km";
+	}
+
+	if (/[\u0e00-\u0e7f]/.test(text)) {
+		return "th";
+	}
+
+	if (/[\u4e00-\u9fff]/.test(text)) {
+		return "zh";
+	}
+
+	return "en";
+}
 
 self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 	const message = event.data;
@@ -134,10 +152,16 @@ async function handleTranscribe({
 	cancelled = false;
 
 	try {
+		self.postMessage({
+			type: "transcribe-progress",
+			progress: 0,
+		} satisfies WorkerResponse);
+
 		const rawResult = await transcriber(audio, {
 			chunk_length_s: DEFAULT_CHUNK_LENGTH_SECONDS,
 			stride_length_s: DEFAULT_STRIDE_SECONDS,
 			language: language === "auto" ? undefined : language,
+			task: "transcribe",
 			return_timestamps: true,
 		});
 
@@ -146,6 +170,10 @@ async function handleTranscribe({
 		const result: AutomaticSpeechRecognitionOutput = Array.isArray(rawResult)
 			? rawResult[0]
 			: rawResult;
+		const enrichedResult = result as AutomaticSpeechRecognitionOutput & {
+			language?: string;
+			language_probability?: number;
+		};
 
 		const segments: TranscriptionSegment[] = [];
 
@@ -162,9 +190,20 @@ async function handleTranscribe({
 		}
 
 		self.postMessage({
+			type: "transcribe-progress",
+			progress: 100,
+		} satisfies WorkerResponse);
+
+		self.postMessage({
 			type: "transcribe-complete",
 			text: result.text,
 			segments,
+			language:
+				typeof enrichedResult.language === "string" &&
+				enrichedResult.language.length > 0
+					? enrichedResult.language
+					: inferLanguageFromText(result.text),
+			languageConfidence: enrichedResult.language_probability,
 		} satisfies WorkerResponse);
 	} catch (error) {
 		if (cancelled) return;

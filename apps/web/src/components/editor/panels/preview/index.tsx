@@ -11,6 +11,7 @@ import { TICKS_PER_SECOND } from "@/lib/wasm";
 import type { RootNode } from "@/services/renderer/nodes/root-node";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { PreviewInteractionOverlay } from "./preview-interaction-overlay";
+import { WatermarkRegionSelectionOverlay } from "./watermark-region-selection-overlay";
 import { BookmarkNoteOverlay } from "./bookmark-note-overlay";
 import { GuideOverlay } from "./guide-overlay";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
@@ -278,6 +279,7 @@ function PreviewCanvas({
 								/>
 								<GuideOverlay />
 								<PreviewInteractionOverlay />
+								<WatermarkRegionSelectionOverlay />
 								{overlays.bookmarks && <BookmarkNoteOverlay />}
 							</div>
 						</ContextMenuTrigger>

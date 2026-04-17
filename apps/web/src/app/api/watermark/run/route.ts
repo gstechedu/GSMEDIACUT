@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,12 +17,37 @@ import {
 	uploadTempObject,
 } from "@/lib/cloud/r2";
 import { webEnv } from "@/lib/env/web";
+import {
+	completeWatermarkProgress,
+	failWatermarkProgress,
+	initWatermarkProgress,
+	updateWatermarkProgress,
+} from "@/lib/watermark/progress-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const RUNPOD_SAFE_RAW_UPLOAD_BYTES = 7 * 1024 * 1024;
+const RUNPOD_SIGNED_URL_EXPIRY_SECONDS = 60 * 60 * 2;
 const PUBLIC_UPLOAD_DIR = path.join(os.tmpdir(), "gsmediacut-public-uploads");
+const PREVIEW_TIMEOUT_MS = 1000 * 90;
+
+type PreviewCacheEntry = {
+	expiresAt: number;
+	result: unknown;
+};
+
+declare global {
+	var __gsmWatermarkPreviewCache: Map<string, PreviewCacheEntry> | undefined;
+}
+
+function getPreviewCache() {
+	if (!globalThis.__gsmWatermarkPreviewCache) {
+		globalThis.__gsmWatermarkPreviewCache = new Map();
+	}
+
+	return globalThis.__gsmWatermarkPreviewCache;
+}
 
 function parsePositiveInt(value: FormDataEntryValue | null) {
 	if (typeof value !== "string") {
@@ -33,8 +58,53 @@ function parsePositiveInt(value: FormDataEntryValue | null) {
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function parseFastRegions(value: FormDataEntryValue | null) {
+	if (typeof value !== "string") {
+		return null;
+	}
+
+	try {
+		const parsed = JSON.parse(value);
+		if (!Array.isArray(parsed)) {
+			return null;
+		}
+
+		const normalized = parsed
+			.map((region) => {
+				if (!region || typeof region !== "object") {
+					return null;
+				}
+
+				const record = region as Record<string, unknown>;
+				const x = Number.parseInt(String(record.x ?? ""), 10);
+				const y = Number.parseInt(String(record.y ?? ""), 10);
+				const width = Number.parseInt(String(record.width ?? ""), 10);
+				const height = Number.parseInt(String(record.height ?? ""), 10);
+				if (
+					!Number.isFinite(x) ||
+					!Number.isFinite(y) ||
+					!Number.isFinite(width) ||
+					!Number.isFinite(height) ||
+					width <= 0 ||
+					height <= 0
+				) {
+					return null;
+				}
+
+				return { x, y, width, height };
+			})
+			.filter((region): region is NonNullable<typeof region> =>
+				Boolean(region),
+			);
+
+		return normalized.length > 0 ? normalized : null;
+	} catch {
+		return null;
+	}
+}
+
 function parseEngine(value: FormDataEntryValue | null) {
-	if (value === "ai" || value === "veo") {
+	if (value === "ai") {
 		return value;
 	}
 
@@ -58,24 +128,7 @@ async function resolveVendorFile(...segments: string[]) {
 	return null;
 }
 
-async function resolveVeoExecutable() {
-	const candidates = [
-		["VeoWatermarkRemover", "GeminiWatermarkTool-Video.exe"],
-		["VeoWatermarkRemover", "VeoWatermarkRemover.exe"],
-	];
-
-	for (const candidate of candidates) {
-		const resolved = await resolveVendorFile(...candidate);
-		if (resolved) {
-			return resolved;
-		}
-	}
-
-	return null;
-}
-
 export async function GET() {
-	const executablePath = await resolveVeoExecutable();
 	const publicBaseUrl = getPublicBaseUrl();
 	const aiTransport = hasR2Config()
 		? "r2"
@@ -90,12 +143,6 @@ export async function GET() {
 				available: true,
 				remote: hasRunpodConfig(),
 				transport: aiTransport,
-			},
-			veo: {
-				available: Boolean(executablePath),
-				reason: executablePath
-					? null
-					: "GeminiWatermarkTool-Video.exe is missing from vendor/VeoWatermarkRemover.",
 			},
 		},
 	});
@@ -123,6 +170,164 @@ function runFfmpeg(args: string[]) {
 			reject(new Error(stderr || `ffmpeg exited with code ${code}`));
 		});
 	});
+}
+
+function runFfprobe(args: string[]) {
+	return new Promise<string>((resolve, reject) => {
+		const process = spawn("ffprobe", args, {
+			stdio: ["ignore", "pipe", "pipe"],
+			windowsHide: true,
+		});
+
+		let stdout = "";
+		let stderr = "";
+		process.stdout.on("data", (chunk) => {
+			stdout += chunk.toString();
+		});
+		process.stderr.on("data", (chunk) => {
+			stderr += chunk.toString();
+		});
+
+		process.on("error", reject);
+		process.on("close", (code) => {
+			if (code === 0) {
+				resolve(stdout);
+				return;
+			}
+
+			reject(new Error(stderr || `ffprobe exited with code ${code}`));
+		});
+	});
+}
+
+async function getVideoDimensions(filePath: string) {
+	const stdout = await runFfprobe([
+		"-v",
+		"error",
+		"-select_streams",
+		"v:0",
+		"-show_entries",
+		"stream=width,height",
+		"-of",
+		"json",
+		filePath,
+	]);
+
+	const parsed = JSON.parse(stdout) as {
+		streams?: Array<{ width?: number; height?: number }>;
+	};
+	const stream = parsed.streams?.[0];
+	const width = Number(stream?.width ?? 0);
+	const height = Number(stream?.height ?? 0);
+
+	if (
+		!Number.isFinite(width) ||
+		!Number.isFinite(height) ||
+		width <= 0 ||
+		height <= 0
+	) {
+		throw new Error("ffprobe returned invalid video dimensions.");
+	}
+
+	return { width, height };
+}
+
+function clampRegionsToVideo(
+	regions: Array<{
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	}> | null,
+	videoSize: { width: number; height: number },
+) {
+	if (!regions || regions.length === 0) {
+		return null;
+	}
+
+	const normalized = regions
+		.map((region) => {
+			const x = Math.max(
+				0,
+				Math.min(videoSize.width - 1, Math.round(region.x)),
+			);
+			const y = Math.max(
+				0,
+				Math.min(videoSize.height - 1, Math.round(region.y)),
+			);
+			const right = Math.max(
+				x + 1,
+				Math.min(videoSize.width, Math.round(region.x + region.width)),
+			);
+			const bottom = Math.max(
+				y + 1,
+				Math.min(videoSize.height, Math.round(region.y + region.height)),
+			);
+			const width = right - x;
+			const height = bottom - y;
+
+			if (width <= 0 || height <= 0) {
+				return null;
+			}
+
+			return { x, y, width, height };
+		})
+		.filter((region): region is NonNullable<typeof region> => Boolean(region));
+
+	return normalized.length > 0 ? normalized : null;
+}
+
+function makeDelogoSafeRegions(
+	regions: Array<{
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	}> | null,
+	videoSize: { width: number; height: number },
+) {
+	if (!regions || regions.length === 0) {
+		return null;
+	}
+
+	const normalized = regions
+		.map((region) => {
+			if (videoSize.width <= 2 || videoSize.height <= 2) {
+				return null;
+			}
+
+			const x = Math.max(1, Math.min(videoSize.width - 2, region.x));
+			const y = Math.max(1, Math.min(videoSize.height - 2, region.y));
+			const right = Math.max(
+				x + 1,
+				Math.min(videoSize.width - 1, region.x + region.width),
+			);
+			const bottom = Math.max(
+				y + 1,
+				Math.min(videoSize.height - 1, region.y + region.height),
+			);
+			const width = right - x;
+			const height = bottom - y;
+
+			if (width <= 0 || height <= 0) {
+				return null;
+			}
+
+			return { x, y, width, height };
+		})
+		.filter((region): region is NonNullable<typeof region> => Boolean(region));
+
+	return normalized.length > 0 ? normalized : null;
+}
+
+function parseOverallProgressFromLine(line: string) {
+	const match = line.match(/overall_progress:(\d+)%/i);
+	if (!match) {
+		return null;
+	}
+
+	const parsed = Number.parseInt(match[1] ?? "", 10);
+	return Number.isFinite(parsed) ? parsed : null;
 }
 
 function buildPythonEnv(tempDir: string) {
@@ -155,11 +360,15 @@ function runCommand({
 	args,
 	cwd,
 	env,
+	onStdoutLine,
+	onStderrLine,
 }: {
 	command: string;
 	args: string[];
 	cwd?: string;
 	env?: NodeJS.ProcessEnv;
+	onStdoutLine?: (line: string) => void;
+	onStderrLine?: (line: string) => void;
 }) {
 	return new Promise<void>((resolve, reject) => {
 		const process = spawn(command, args, {
@@ -171,6 +380,90 @@ function runCommand({
 
 		let stdout = "";
 		let stderr = "";
+		let stdoutBuffer = "";
+		let stderrBuffer = "";
+		process.stdout.on("data", (chunk) => {
+			const value = chunk.toString();
+			stdout += value;
+			stdoutBuffer += value;
+			const lines = stdoutBuffer.split(/\r?\n/);
+			stdoutBuffer = lines.pop() ?? "";
+			for (const line of lines) {
+				onStdoutLine?.(line);
+			}
+		});
+		process.stderr.on("data", (chunk) => {
+			const value = chunk.toString();
+			stderr += value;
+			stderrBuffer += value;
+			const lines = stderrBuffer.split(/\r?\n/);
+			stderrBuffer = lines.pop() ?? "";
+			for (const line of lines) {
+				onStderrLine?.(line);
+			}
+		});
+
+		process.on("error", reject);
+		process.on("close", (code) => {
+			if (stdoutBuffer) {
+				onStdoutLine?.(stdoutBuffer);
+			}
+			if (stderrBuffer) {
+				onStderrLine?.(stderrBuffer);
+			}
+			if (code === 0) {
+				resolve();
+				return;
+			}
+
+			reject(
+				new Error(stderr || stdout || `${command} exited with code ${code}`),
+			);
+		});
+	});
+}
+
+function runCommandCapture({
+	command,
+	args,
+	cwd,
+	env,
+	timeoutMs,
+}: {
+	command: string;
+	args: string[];
+	cwd?: string;
+	env?: NodeJS.ProcessEnv;
+	timeoutMs?: number;
+}) {
+	return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+		const process = spawn(command, args, {
+			stdio: ["ignore", "pipe", "pipe"],
+			windowsHide: true,
+			cwd,
+			env,
+		});
+
+		let stdout = "";
+		let stderr = "";
+		let settled = false;
+		const timeoutId =
+			typeof timeoutMs === "number" && timeoutMs > 0
+				? setTimeout(() => {
+						if (settled) {
+							return;
+						}
+						settled = true;
+						process.kill();
+						reject(
+							new Error(
+								`Preview detection timed out after ${Math.round(
+									timeoutMs / 1000,
+								)} seconds.`,
+							),
+						);
+					}, timeoutMs)
+				: null;
 		process.stdout.on("data", (chunk) => {
 			stdout += chunk.toString();
 		});
@@ -178,10 +471,26 @@ function runCommand({
 			stderr += chunk.toString();
 		});
 
-		process.on("error", reject);
+		process.on("error", (error) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			if (timeoutId) {
+				clearTimeout(timeoutId);
+			}
+			reject(error);
+		});
 		process.on("close", (code) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			if (timeoutId) {
+				clearTimeout(timeoutId);
+			}
 			if (code === 0) {
-				resolve();
+				resolve({ stdout, stderr });
 				return;
 			}
 
@@ -385,7 +694,7 @@ async function createRunpodR2Upload({
 
 	const sourceUrl = await createSignedDownloadUrl({
 		key,
-		expiresInSeconds: 60 * 60 * 2,
+		expiresInSeconds: RUNPOD_SIGNED_URL_EXPIRY_SECONDS,
 	});
 
 	return { key, sourceUrl };
@@ -401,22 +710,29 @@ async function createRunpodR2ResultUpload({ file }: { file: File }) {
 		createSignedUploadUrl({
 			key,
 			contentType,
-			expiresInSeconds: 60 * 60 * 2,
+			expiresInSeconds: RUNPOD_SIGNED_URL_EXPIRY_SECONDS,
 		}),
 		createSignedDownloadUrl({
 			key,
-			expiresInSeconds: 60 * 60 * 2,
+			expiresInSeconds: RUNPOD_SIGNED_URL_EXPIRY_SECONDS,
 		}),
 	]);
 
 	return { key, resultUploadUrl, resultDownloadUrl };
 }
 
-async function waitForRunpodCompletion(jobId: string) {
+async function waitForRunpodCompletion({
+	jobId,
+	onStatus,
+}: {
+	jobId: string;
+	onStatus?: (status: string) => void;
+}) {
 	const timeoutAt = Date.now() + 1000 * 60 * 20;
 
 	while (Date.now() < timeoutAt) {
 		const status = await getRunpodJobStatus({ jobId });
+		onStatus?.(status.status);
 
 		if (typeof status.error === "string" && status.error) {
 			throw new Error(`Runpod worker failed: ${status.error}`);
@@ -454,6 +770,9 @@ async function runRunpodWatermark({
 	detectionSkip,
 	fadeIn,
 	fadeOut,
+	jobId,
+	transparent,
+	regions,
 }: {
 	file: File;
 	fileBuffer: Buffer;
@@ -464,6 +783,14 @@ async function runRunpodWatermark({
 	detectionSkip: number;
 	fadeIn: string;
 	fadeOut: string;
+	jobId: string;
+	transparent: boolean;
+	regions?: Array<{
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	}> | null;
 }) {
 	let queuedJob: Awaited<ReturnType<typeof submitRunpodJob>>;
 	try {
@@ -481,6 +808,8 @@ async function runRunpodWatermark({
 				detectionSkip,
 				fadeIn,
 				fadeOut,
+				transparent,
+				...(regions && regions.length > 0 ? { regions } : {}),
 			},
 		});
 	} catch (error) {
@@ -501,7 +830,36 @@ async function runRunpodWatermark({
 		throw new Error("Runpod did not return a job id.");
 	}
 
-	const result = await waitForRunpodCompletion(queuedJob.id);
+	updateWatermarkProgress(jobId, {
+		phase: "queued",
+		progress: 30,
+		message: "Queued on Runpod",
+		detail: "Waiting for an available worker to pick up the AI job.",
+	});
+
+	const result = await waitForRunpodCompletion({
+		jobId: queuedJob.id,
+		onStatus: (status) => {
+			if (status === "IN_PROGRESS") {
+				updateWatermarkProgress(jobId, {
+					phase: "processing",
+					progress: 62,
+					message: "Processing on remote GPU",
+					detail: "Runpod is detecting and removing the watermark on the GPU.",
+				});
+				return;
+			}
+
+			if (status === "IN_QUEUE" || status === "QUEUED") {
+				updateWatermarkProgress(jobId, {
+					phase: "queued",
+					progress: 34,
+					message: "Queued on Runpod",
+					detail: "Waiting for an available worker to pick up the AI job.",
+				});
+			}
+		},
+	});
 
 	if (resultDownloadUrl) {
 		try {
@@ -546,17 +904,33 @@ async function runRunpodWatermark({
 
 export async function POST(request: Request) {
 	const formData = await request.formData();
+	const requestJobId =
+		request.headers.get("x-gsm-watermark-job-id") ??
+		request.headers.get("x-gsm-job-id");
 	const file = formData.get("file");
 	const engine = parseEngine(formData.get("engine"));
 	const x = parsePositiveInt(formData.get("x"));
 	const y = parsePositiveInt(formData.get("y"));
 	const width = parsePositiveInt(formData.get("width"));
 	const height = parsePositiveInt(formData.get("height"));
+	const regions =
+		parseFastRegions(formData.get("regions")) ??
+		([x, y, width, height].every((value) => value !== null) && width && height
+			? [{ x: x as number, y: y as number, width, height }]
+			: null);
 	const detectionPrompt =
 		typeof formData.get("detectionPrompt") === "string"
 			? (formData.get("detectionPrompt") as string)
 			: "watermark";
 	const detectionSkip = parsePositiveInt(formData.get("detectionSkip")) ?? 2;
+	const transparent =
+		typeof formData.get("transparent") === "string"
+			? formData.get("transparent") === "true"
+			: false;
+	const preview =
+		typeof formData.get("preview") === "string"
+			? formData.get("preview") === "true"
+			: false;
 	const fadeIn =
 		typeof formData.get("fadeIn") === "string" ? formData.get("fadeIn") : "0.2";
 	const fadeOut =
@@ -568,16 +942,14 @@ export async function POST(request: Request) {
 		return new NextResponse("No file uploaded", { status: 400 });
 	}
 
-	if (
-		engine === "fast" &&
-		([x, y, width, height].some((value) => value === null) || !width || !height)
-	) {
+	if (engine === "fast" && (!regions || regions.length === 0)) {
 		return new NextResponse("Invalid watermark region", { status: 400 });
 	}
 
-	const jobId = randomUUID();
+	const jobId = requestJobId?.trim() || randomUUID();
 	const tempDir = path.join(os.tmpdir(), "gsmediacut-watermark", jobId);
 	await fs.mkdir(tempDir, { recursive: true });
+	initWatermarkProgress(jobId);
 
 	const inputExtension = path.extname(file.name) || ".mp4";
 	const inputPath = path.join(tempDir, `input${inputExtension}`);
@@ -600,6 +972,122 @@ export async function POST(request: Request) {
 	try {
 		const inputBuffer = Buffer.from(await file.arrayBuffer());
 		await fs.writeFile(inputPath, inputBuffer);
+		const inputVideoSize = await getVideoDimensions(inputPath);
+		const normalizedRegions = clampRegionsToVideo(regions, inputVideoSize);
+		const delogoSafeRegions = makeDelogoSafeRegions(
+			normalizedRegions,
+			inputVideoSize,
+		);
+		if (
+			engine === "fast" &&
+			(!delogoSafeRegions || delogoSafeRegions.length === 0)
+		) {
+			throw new Error("Selected watermark area is outside the video frame.");
+		}
+		const previewCacheKey = preview
+			? createHash("sha1")
+					.update(inputBuffer)
+					.update("\0")
+					.update(detectionPrompt.trim().toLowerCase())
+					.update("\0")
+					.update(JSON.stringify(normalizedRegions ?? []))
+					.digest("hex")
+			: null;
+		updateWatermarkProgress(jobId, {
+			phase: "preparing",
+			progress: 6,
+			message: "Preparing clip",
+			detail: "Checking the selected clip and building the processing request.",
+		});
+
+		if (preview) {
+			const previewCache = getPreviewCache();
+			const cachedPreview = previewCacheKey
+				? previewCache.get(previewCacheKey)
+				: null;
+			if (cachedPreview && cachedPreview.expiresAt > Date.now()) {
+				completeWatermarkProgress(jobId, {
+					phase: "completed",
+					progress: 100,
+					message: "Preview detection ready",
+					detail: "Loaded the cached detection preview.",
+				});
+				return NextResponse.json(cachedPreview.result);
+			}
+
+			const scriptPath = await resolveVendorFile(
+				"WatermarkRemover-AI",
+				"remwm.py",
+			);
+			const vendorRoot = await resolveVendorFile("WatermarkRemover-AI");
+			if (!scriptPath) {
+				return NextResponse.json(
+					{ error: "WatermarkRemover-AI script not found in vendor" },
+					{ status: 500 },
+				);
+			}
+
+			const pythonEnv = buildPythonEnv(tempDir);
+			await fs.mkdir(pythonEnv.TORCHINDUCTOR_CACHE_DIR ?? tempDir, {
+				recursive: true,
+			});
+			await fs.mkdir(pythonEnv.TORCH_HOME ?? tempDir, { recursive: true });
+			await fs.mkdir(pythonEnv.XDG_CACHE_HOME ?? tempDir, {
+				recursive: true,
+			});
+
+			const previewResult = await runCommandCapture({
+				command: "python",
+				cwd: vendorRoot ?? path.dirname(scriptPath),
+				env: pythonEnv,
+				timeoutMs: PREVIEW_TIMEOUT_MS,
+				args: [
+					scriptPath,
+					inputPath,
+					outputPath,
+					"--preview",
+					...(normalizedRegions && normalizedRegions.length > 0
+						? ["--manual-regions-json", JSON.stringify(normalizedRegions)]
+						: []),
+					"--detection-prompt",
+					detectionPrompt,
+					"--detection-skip",
+					Math.min(Math.max(detectionSkip, 1), 10).toString(),
+					"--fade-in",
+					fadeIn,
+					"--fade-out",
+					fadeOut,
+				],
+			});
+
+			const lines = previewResult.stdout
+				.split(/\r?\n/)
+				.map((line) => line.trim())
+				.filter(Boolean);
+			const jsonLine = [...lines]
+				.reverse()
+				.find((line) => line.startsWith("{") && line.endsWith("}"));
+
+			if (!jsonLine) {
+				throw new Error("Preview detection did not return JSON output.");
+			}
+
+			const previewPayload = JSON.parse(jsonLine);
+			if (previewCacheKey) {
+				previewCache.set(previewCacheKey, {
+					expiresAt: Date.now() + 1000 * 60 * 10,
+					result: previewPayload,
+				});
+			}
+
+			completeWatermarkProgress(jobId, {
+				phase: "completed",
+				progress: 100,
+				message: "Preview detection completed",
+				detail: "Detection preview is ready.",
+			});
+			return NextResponse.json(previewPayload);
+		}
 
 		if (engine === "ai") {
 			const shouldUseRunpod =
@@ -616,6 +1104,21 @@ export async function POST(request: Request) {
 
 			if (shouldUseRunpod) {
 				try {
+					updateWatermarkProgress(jobId, {
+						phase: "uploading",
+						progress: 18,
+						message: hasR2Config()
+							? "Uploading to R2"
+							: inputBuffer.byteLength > RUNPOD_SAFE_RAW_UPLOAD_BYTES
+								? "Uploading to server"
+								: "Sending clip to Runpod",
+						detail: hasR2Config()
+							? "Sending the source clip to Cloudflare R2 so Runpod can download it."
+							: inputBuffer.byteLength > RUNPOD_SAFE_RAW_UPLOAD_BYTES
+								? "Sending the source clip to your server so Runpod can download it."
+								: "Sending the clip directly to Runpod in the request body.",
+					});
+
 					if (hasR2Config()) {
 						[runpodR2Upload, runpodR2ResultUpload] = await Promise.all([
 							createRunpodR2Upload({
@@ -648,12 +1151,21 @@ export async function POST(request: Request) {
 							detectionSkip: Math.min(Math.max(detectionSkip, 1), 10),
 							fadeIn,
 							fadeOut,
+							jobId,
+							transparent,
+							regions: normalizedRegions,
 						});
 						aiMode = runpodR2Upload
 							? "runpod-r2"
 							: runpodSourceUpload
 								? "runpod-url"
 								: "runpod";
+						updateWatermarkProgress(jobId, {
+							phase: "downloading",
+							progress: 82,
+							message: "Downloading cleaned result",
+							detail: "Fetching the cleaned video back into GSMEDIACUT.",
+						});
 						await fs.writeFile(outputPath, runpodBuffer);
 					}
 				} catch (error) {
@@ -673,6 +1185,11 @@ export async function POST(request: Request) {
 				);
 				const vendorRoot = await resolveVendorFile("WatermarkRemover-AI");
 				if (!scriptPath) {
+					failWatermarkProgress(
+						jobId,
+						"WatermarkRemover-AI script not found",
+						"WatermarkRemover-AI script not found in vendor",
+					);
 					return new NextResponse(
 						"WatermarkRemover-AI script not found in vendor",
 						{
@@ -686,6 +1203,12 @@ export async function POST(request: Request) {
 					aiModeReason =
 						"Runpod is not configured, so AI used local processing.";
 				}
+				updateWatermarkProgress(jobId, {
+					phase: "processing",
+					progress: 12,
+					message: "Processing locally",
+					detail: "WatermarkRemover-AI is running on the local worker.",
+				});
 
 				const pythonEnv = buildPythonEnv(tempDir);
 				await fs.mkdir(pythonEnv.TORCHINDUCTOR_CACHE_DIR ?? tempDir, {
@@ -700,11 +1223,39 @@ export async function POST(request: Request) {
 					command: "python",
 					cwd: vendorRoot ?? path.dirname(scriptPath),
 					env: pythonEnv,
+					onStdoutLine: (line) => {
+						const parsed = parseOverallProgressFromLine(line);
+						if (parsed === null) {
+							return;
+						}
+						updateWatermarkProgress(jobId, {
+							phase: "processing",
+							progress: Math.max(12, Math.min(96, parsed)),
+							message: "Processing locally",
+							detail: `WatermarkRemover-AI progress: ${parsed}%`,
+						});
+					},
+					onStderrLine: (line) => {
+						const parsed = parseOverallProgressFromLine(line);
+						if (parsed === null) {
+							return;
+						}
+						updateWatermarkProgress(jobId, {
+							phase: "processing",
+							progress: Math.max(12, Math.min(96, parsed)),
+							message: "Processing locally",
+							detail: `WatermarkRemover-AI progress: ${parsed}%`,
+						});
+					},
 					args: [
 						scriptPath,
 						inputPath,
 						outputPath,
 						"--overwrite",
+						...(transparent ? ["--transparent"] : []),
+						...(normalizedRegions && normalizedRegions.length > 0
+							? ["--manual-regions-json", JSON.stringify(normalizedRegions)]
+							: []),
 						"--force-format",
 						"MP4",
 						"--detection-prompt",
@@ -718,27 +1269,28 @@ export async function POST(request: Request) {
 					],
 				});
 			}
-		} else if (engine === "veo") {
-			const executablePath = await resolveVeoExecutable();
-			if (!executablePath) {
-				return new NextResponse(
-					"Veo Remove needs the release binary `GeminiWatermarkTool-Video.exe` inside vendor/VeoWatermarkRemover.",
-					{ status: 500 },
-				);
-			}
-
-			await runCommand({
-				command: executablePath,
-				cwd: path.dirname(executablePath),
-				args: ["--veo", "-i", inputPath, "-o", outputPath],
-			});
 		} else {
+			const delogoRegions = delogoSafeRegions ?? [];
+			updateWatermarkProgress(jobId, {
+				phase: "processing",
+				progress: 25,
+				message: "Processing locally",
+				detail:
+					delogoRegions.length > 1
+						? `Applying FFmpeg delogo to ${delogoRegions.length} selected regions.`
+						: "Applying FFmpeg delogo to the selected region.",
+			});
 			await runFfmpeg([
 				"-y",
 				"-i",
 				inputPath,
 				"-vf",
-				`delogo=x=${x}:y=${y}:w=${width}:h=${height}:show=0`,
+				delogoRegions
+					.map(
+						(region) =>
+							`delogo=x=${region.x}:y=${region.y}:w=${region.width}:h=${region.height}:show=0`,
+					)
+					.join(","),
 				"-c:v",
 				"libx264",
 				"-preset",
@@ -753,7 +1305,20 @@ export async function POST(request: Request) {
 			]);
 		}
 
+		updateWatermarkProgress(jobId, {
+			phase: "cleaning",
+			progress: 97,
+			message: "Cleaning up temporary files",
+			detail: "Finalizing the cleaned clip response.",
+		});
+
 		const outputBuffer = await fs.readFile(outputPath);
+		completeWatermarkProgress(jobId, {
+			phase: "completed",
+			progress: 100,
+			message: "Watermark cleanup completed",
+			detail: "The cleaned clip is ready to import into the timeline.",
+		});
 		return new NextResponse(new Uint8Array(outputBuffer), {
 			status: 200,
 			headers: {
@@ -766,6 +1331,11 @@ export async function POST(request: Request) {
 		});
 	} catch (error) {
 		console.error("Watermark processing failed:", error);
+		failWatermarkProgress(
+			jobId,
+			"Watermark cleanup failed",
+			error instanceof Error ? error.message : "Unknown error",
+		);
 		return new NextResponse(
 			error instanceof Error ? error.message : "Watermark processing failed",
 			{ status: 500 },

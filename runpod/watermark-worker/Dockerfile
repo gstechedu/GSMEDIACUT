@@ -4,11 +4,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 ENV TORCH_HOME=/root/.cache/torch
 ENV XDG_CACHE_HOME=/root/.cache
 ENV WATERMARK_REMOVER_REPO=https://github.com/D-Ogi/WatermarkRemover-AI
 ENV WATERMARK_REMOVER_REF=2a15d4d51a483a9fdc8437ec52b1146319d9bda9
-ENV FORCE_REBUILD=florence2-v7
+ENV FORCE_REBUILD=florence2-v11
 ENV PRELOAD_LAMA_MODEL=0
 
 WORKDIR /app
@@ -18,7 +20,8 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-dev \
     ffmpeg \
-    git \
+    libgl1 \
+    libvulkan1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -36,12 +39,31 @@ RUN python3 -m pip install --upgrade pip setuptools wheel && \
 
 COPY runpod/watermark-worker /app/runpod/watermark-worker
 
-RUN mkdir -p /app/vendor/WatermarkRemover-AI && \
-    cd /app/vendor/WatermarkRemover-AI && \
-    git init && \
-    git remote add origin ${WATERMARK_REMOVER_REPO} && \
-    git fetch --depth 1 origin ${WATERMARK_REMOVER_REF} && \
-    git checkout FETCH_HEAD
+RUN python3 - <<'PY'
+from pathlib import Path
+from urllib.request import urlopen
+import io
+import tarfile
+
+repo = "https://github.com/D-Ogi/WatermarkRemover-AI"
+ref = "2a15d4d51a483a9fdc8437ec52b1146319d9bda9"
+target = Path("/app/vendor")
+target.mkdir(parents=True, exist_ok=True)
+archive_url = f"{repo}/archive/{ref}.tar.gz"
+
+with urlopen(archive_url) as response:
+    archive_bytes = response.read()
+
+with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
+    tar.extractall(target)
+
+extracted = target / f"WatermarkRemover-AI-{ref}"
+final = target / "WatermarkRemover-AI"
+if final.exists():
+    raise RuntimeError(f"Unexpected existing path: {final}")
+extracted.rename(final)
+print(f"Fetched WatermarkRemover-AI at {ref}")
+PY
 
 RUN python3 - <<'PY'
 from pathlib import Path

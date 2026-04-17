@@ -17,12 +17,15 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import {
 	TextFontIcon,
 	ArrowExpandIcon,
+	ArrowRightDoubleIcon,
 	RainDropIcon,
 	MusicNote03Icon,
 	MagicWand05Icon,
 	MagicWand03Icon,
 	DashboardSpeed02Icon,
+	Mic01Icon,
 } from "@hugeicons/core-free-icons";
+import { hasMediaId } from "@/lib/timeline/element-utils";
 import { TransformTab } from "./tabs/transform-tab";
 import { BlendingTab } from "./tabs/blending-tab";
 import { AudioTab } from "./tabs/audio-tab";
@@ -32,6 +35,8 @@ import { MasksTab } from "./tabs/masks-tab";
 import { SpeedTab } from "./tabs/speed-tab";
 import { GraphicTab } from "./tabs/graphic-tab";
 import { WatermarkTab } from "./tabs/watermark-tab";
+import { SeparateSoundTab } from "./tabs/separate-sound-tab";
+import { TransitionTab } from "./tabs/transition-tab";
 import { OcShapesIcon } from "@/components/icons";
 
 export type TabContentProps = {
@@ -82,14 +87,39 @@ function buildBlendingTab({
 
 function buildAudioTab({
 	element,
+	mediaAsset,
 }: {
 	element: AudioElement | VideoElement;
+	mediaAsset: MediaAsset | undefined;
 }): PropertiesTabDef {
 	return {
 		id: "audio",
 		label: "Audio",
 		icon: <HugeiconsIcon icon={MusicNote03Icon} size={16} />,
-		content: ({ trackId }) => <AudioTab element={element} trackId={trackId} />,
+		content: ({ trackId }) => (
+			<AudioTab element={element} mediaAsset={mediaAsset} trackId={trackId} />
+		),
+	};
+}
+
+function buildTransitionTab({
+	element,
+	mediaAsset,
+}: {
+	element: AudioElement | VideoElement;
+	mediaAsset: MediaAsset | undefined;
+}): PropertiesTabDef {
+	return {
+		id: "transition",
+		label: "Voice",
+		icon: <HugeiconsIcon icon={ArrowRightDoubleIcon} size={16} />,
+		content: ({ trackId }) => (
+			<TransitionTab
+				element={element}
+				mediaAsset={mediaAsset}
+				trackId={trackId}
+			/>
+		),
 	};
 }
 
@@ -147,6 +177,27 @@ function buildWatermarkTab({
 		icon: <HugeiconsIcon icon={MagicWand03Icon} size={16} />,
 		content: ({ trackId }) => (
 			<WatermarkTab
+				element={element}
+				mediaAsset={mediaAsset}
+				trackId={trackId}
+			/>
+		),
+	};
+}
+
+function buildSeparateSoundTab({
+	element,
+	mediaAsset,
+}: {
+	element: AudioElement | VideoElement;
+	mediaAsset: MediaAsset | undefined;
+}): PropertiesTabDef {
+	return {
+		id: "separate-sound",
+		label: "Separate Sound",
+		icon: <HugeiconsIcon icon={Mic01Icon} size={16} />,
+		content: ({ trackId }) => (
+			<SeparateSoundTab
 				element={element}
 				mediaAsset={mediaAsset}
 				trackId={trackId}
@@ -222,7 +273,9 @@ function getVideoConfig({
 		tabs: [
 			buildTransformTab({ element }),
 			buildWatermarkTab({ element, mediaAsset }),
-			...(showAudioTab ? [buildAudioTab({ element })] : []),
+			...(showAudioTab ? [buildAudioTab({ element, mediaAsset })] : []),
+			...(showAudioTab ? [buildTransitionTab({ element, mediaAsset })] : []),
+			...(showAudioTab ? [buildSeparateSoundTab({ element, mediaAsset })] : []),
 			buildSpeedTab({ element }),
 			buildBlendingTab({ element }),
 			buildMasksTab({ element }),
@@ -281,12 +334,19 @@ function getGraphicConfig({
 
 function getAudioConfig({
 	element,
+	mediaAsset,
 }: {
 	element: AudioElement;
+	mediaAsset: MediaAsset | undefined;
 }): ElementPropertiesConfig {
 	return {
 		defaultTab: "audio",
-		tabs: [buildAudioTab({ element }), buildSpeedTab({ element })],
+		tabs: [
+			buildAudioTab({ element, mediaAsset }),
+			buildTransitionTab({ element, mediaAsset }),
+			buildSeparateSoundTab({ element, mediaAsset }),
+			buildSpeedTab({ element }),
+		],
 	};
 }
 
@@ -322,7 +382,12 @@ export function getPropertiesConfig({
 		case "graphic":
 			return getGraphicConfig({ element });
 		case "audio":
-			return getAudioConfig({ element });
+			return getAudioConfig({
+				element,
+				mediaAsset: hasMediaId(element)
+					? mediaAssets.find((a) => a.id === element.mediaId)
+					: undefined,
+			});
 		case "effect":
 			return getEffectConfig({ element });
 	}

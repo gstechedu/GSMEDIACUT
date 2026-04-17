@@ -1,4 +1,5 @@
 import type { FrameRate } from "opencut-wasm";
+import type { ProjectState } from "@/lib/hybrid/types";
 import type { TScene } from "@/lib/timeline/types";
 
 export type TBackground =
@@ -23,6 +24,9 @@ export interface TProjectMetadata {
 	duration: number;
 	createdAt: Date;
 	updatedAt: Date;
+	source?: "internal" | "external-draft";
+	externalPath?: string;
+	isReadOnly?: boolean;
 }
 
 export interface TProjectSettings {
@@ -45,6 +49,7 @@ export interface TProject {
 	scenes: TScene[];
 	currentSceneId: string;
 	settings: TProjectSettings;
+	projectState: ProjectState;
 	version: number;
 	timelineViewState?: TTimelineViewState;
 }

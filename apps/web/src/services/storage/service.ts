@@ -1,4 +1,5 @@
 import type { TProject, TProjectMetadata } from "@/lib/project/types";
+import { normalizeProjectState } from "@/lib/hybrid/project-state";
 import { getProjectDurationFromScenes } from "@/lib/scenes";
 import type { MediaAsset } from "@/lib/media/types";
 import { IndexedDBAdapter } from "./indexeddb-adapter";
@@ -176,6 +177,7 @@ class StorageService {
 			scenes: serializedScenes,
 			currentSceneId: project.currentSceneId,
 			settings: project.settings,
+			projectState: normalizeProjectState(project.projectState),
 			version: project.version,
 			timelineViewState: project.timelineViewState,
 		};
@@ -221,6 +223,7 @@ class StorageService {
 			scenes,
 			currentSceneId: serializedProject.currentSceneId || "",
 			settings: serializedProject.settings,
+			projectState: normalizeProjectState(serializedProject.projectState),
 			version: serializedProject.version,
 			timelineViewState: serializedProject.timelineViewState,
 		};
@@ -267,6 +270,36 @@ class StorageService {
 		return metadata.sort(
 			(a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
 		);
+	}
+
+	async loadExternalProjectsMetadata(): Promise<TProjectMetadata[]> {
+		try {
+			const response = await fetch("/api/local-drafts", {
+				cache: "no-store",
+			});
+
+			if (!response.ok) {
+				return [];
+			}
+
+			const payload = (await response.json()) as {
+				drafts?: Array<
+					Omit<TProjectMetadata, "createdAt" | "updatedAt"> & {
+						createdAt: string;
+						updatedAt: string;
+					}
+				>;
+			};
+
+			return (payload.drafts ?? []).map((draft) => ({
+				...draft,
+				createdAt: new Date(draft.createdAt),
+				updatedAt: new Date(draft.updatedAt),
+			}));
+		} catch (error) {
+			console.error("Failed to load external projects:", error);
+			return [];
+		}
 	}
 
 	async deleteProject({ id }: { id: string }): Promise<void> {

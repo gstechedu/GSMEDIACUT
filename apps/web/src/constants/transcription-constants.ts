@@ -14,6 +14,8 @@ const SUPPORTED_TRANSCRIPTION_LANGS: ReadonlyArray<LanguageCode> = [
 	"pt",
 	"ru",
 	"ja",
+	"th",
+	"km",
 	"zh",
 ];
 
@@ -49,7 +51,7 @@ export const TRANSCRIPTION_MODELS: TranscriptionModel[] = [
 ];
 
 export const DEFAULT_TRANSCRIPTION_MODEL: TranscriptionModelId =
-	"whisper-small";
+	"whisper-large-v3-turbo";
 
 export const DEFAULT_TRANSCRIPTION_SAMPLE_RATE = 16000;
 

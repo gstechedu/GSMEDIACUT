@@ -7,6 +7,8 @@ export const LANGUAGES = [
 	{ code: "pt", name: "Portuguese" },
 	{ code: "ru", name: "Russian" },
 	{ code: "ja", name: "Japanese" },
+	{ code: "th", name: "Thai" },
+	{ code: "km", name: "Khmer" },
 	{ code: "zh", name: "Chinese" },
 ] as const;
 

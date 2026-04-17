@@ -13,12 +13,44 @@ import {
 	tabs,
 	useAssetsPanelStore,
 } from "@/stores/assets-panel-store";
+import { useTimelineStore } from "@/stores/timeline-store";
+import { useEditor } from "@/hooks/use-editor";
+import { useElementSelection } from "@/hooks/timeline/element/use-element-selection";
+import { usePropertiesStore } from "../properties/stores/properties-store";
+import { hasMediaId } from "@/lib/timeline";
 
 export function TabBar() {
 	const { activeTab, setActiveTab } = useAssetsPanelStore();
+	const editor = useEditor();
+	const mediaAssets = useEditor((currentEditor) =>
+		currentEditor.media.getAssets(),
+	);
+	const { selectedElements } = useElementSelection();
+	const setActivePropertiesTab = usePropertiesStore((state) => state.setActiveTab);
+	const setTimelineEditorMode = useTimelineStore(
+		(state) => state.setEditorMode,
+	);
 	const [showTopFade, setShowTopFade] = useState(false);
 	const [showBottomFade, setShowBottomFade] = useState(false);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const selectedElementWithTrack =
+		selectedElements.length === 1
+			? (editor.timeline.getElementsWithTracks({
+					elements: selectedElements,
+				})[0] ?? null)
+			: null;
+	const selectedElement = selectedElementWithTrack?.element ?? null;
+	const selectedMediaAsset =
+		selectedElement && hasMediaId(selectedElement)
+			? mediaAssets.find(
+					(asset) => asset.id === selectedElement.mediaId,
+				) ?? null
+			: null;
+	const canOpenTransitionPanel =
+		!!selectedElementWithTrack &&
+		(selectedElementWithTrack.element.type === "audio" ||
+			(selectedElementWithTrack.element.type === "video" &&
+				selectedMediaAsset?.hasAudio !== false));
 
 	const checkScrollPosition = useCallback(() => {
 		const element = scrollRef.current;
@@ -57,15 +89,40 @@ export function TabBar() {
 						<Tooltip key={tabKey} delayDuration={10}>
 							<TooltipTrigger asChild>
 								<Button
-									variant={activeTab === tabKey ? "secondary" : "ghost"}
+									variant={
+										tabKey === "transitions"
+											? "ghost"
+											: activeTab === tabKey
+												? "secondary"
+												: "ghost"
+									}
 									size="icon"
 									aria-label={tab.label}
+									disabled={tabKey === "transitions" && !canOpenTransitionPanel}
 									className={cn(
 										"shrink-0",
 										"h-8 w-8",
-										activeTab !== tabKey && "text-muted-foreground",
+										tabKey === "transitions"
+											? "text-muted-foreground"
+											: activeTab !== tabKey && "text-muted-foreground",
 									)}
-									onClick={() => setActiveTab(tabKey)}
+									onClick={() => {
+										if (tabKey === "transitions") {
+											if (!selectedElementWithTrack) {
+												return;
+											}
+
+											setActivePropertiesTab(
+												selectedElementWithTrack.element.type,
+												"transition",
+											);
+											setTimelineEditorMode("transition");
+											return;
+										}
+
+										setTimelineEditorMode("timeline");
+										setActiveTab(tabKey);
+									}}
 								>
 									<tab.icon />
 								</Button>

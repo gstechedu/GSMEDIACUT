@@ -14,6 +14,14 @@ interface EditableTimecodeProps {
 	disabled?: boolean;
 }
 
+function normalizeTimecodeValue(value: number) {
+	if (!Number.isFinite(value)) {
+		return 0;
+	}
+
+	return Math.max(0, Math.round(value));
+}
+
 export function EditableTimecode({
 	time,
 	duration,
@@ -28,7 +36,10 @@ export function EditableTimecode({
 	const [hasError, setHasError] = useState(false);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const enterPressedRef = useRef(false);
-	const formattedTime = formatTimecode({ time, format, rate: fps }) ?? "";
+	const normalizedTime = normalizeTimecodeValue(time);
+	const normalizedDuration = normalizeTimecodeValue(duration);
+	const formattedTime =
+		formatTimecode({ time: normalizedTime, format, rate: fps }) ?? "";
 
 	const startEditing = () => {
 		if (disabled) return;
@@ -53,11 +64,15 @@ export function EditableTimecode({
 			return;
 		}
 
-		const clampedTime = duration
-			? (snappedSeekTime({ time: parsedTime, duration, rate: fps }) ?? parsedTime)
-			: parsedTime;
+		const clampedTime = normalizedDuration
+			? (snappedSeekTime({
+					time: normalizeTimecodeValue(parsedTime),
+					duration: normalizedDuration,
+					rate: fps,
+				}) ?? normalizeTimecodeValue(parsedTime))
+			: normalizeTimecodeValue(parsedTime);
 
-		onTimeChange?.({ time: clampedTime });
+		onTimeChange?.({ time: normalizeTimecodeValue(clampedTime) });
 		setIsEditing(false);
 		setInputValue("");
 		setHasError(false);

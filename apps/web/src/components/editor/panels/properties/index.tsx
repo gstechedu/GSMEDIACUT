@@ -10,10 +10,16 @@ import {
 } from "@/components/ui/tooltip";
 import { useEditor } from "@/hooks/use-editor";
 import { useElementSelection } from "@/hooks/timeline/element/use-element-selection";
+import { useEffect, useMemo } from "react";
 import { usePropertiesStore } from "./stores/properties-store";
 import { getPropertiesConfig } from "./registry";
 import { cn } from "@/utils/ui";
 import { EmptyView } from "./empty-view";
+import { useTimelineStore } from "@/stores/timeline-store";
+import { MultiSelectionPanel } from "./multi-selection-panel";
+import { hasMediaId } from "@/lib/timeline/element-utils";
+import { useBackgroundTasksStore } from "@/stores/background-tasks-store";
+import { useWatermarkJobsStore } from "@/stores/watermark-jobs-store";
 
 export function PropertiesPanel() {
 	const editor = useEditor();
@@ -21,6 +27,104 @@ export function PropertiesPanel() {
 	useEditor((e) => e.media.getAssets());
 	const { selectedElements } = useElementSelection();
 	const { activeTabPerType, setActiveTab } = usePropertiesStore();
+	const setTimelineEditorMode = useTimelineStore(
+		(state) => state.setEditorMode,
+	);
+	const mediaAssets = editor.media.getAssets();
+	const elementWithTrack =
+		selectedElements.length === 1
+			? (editor.timeline.getElementsWithTracks({
+					elements: selectedElements,
+				})[0] ?? null)
+			: null;
+	const selectedElement = elementWithTrack?.element ?? null;
+	const config = selectedElement
+		? getPropertiesConfig({ element: selectedElement, mediaAssets })
+		: null;
+	const visibleTabs = config?.tabs ?? [];
+	const storedTabId = selectedElement
+		? activeTabPerType[selectedElement.type]
+		: null;
+	const isStoredTabVisible = visibleTabs.some((tab) => tab.id === storedTabId);
+	const activeTabId =
+		config && storedTabId && isStoredTabVisible
+			? storedTabId
+			: config?.defaultTab;
+	const activeTab =
+		visibleTabs.find((tab) => tab.id === activeTabId) ?? visibleTabs[0] ?? null;
+	const currentAssetId =
+		selectedElement && hasMediaId(selectedElement)
+			? selectedElement.mediaId
+			: null;
+	const backgroundTasksByKey = useBackgroundTasksStore(
+		(state) => state.tasksByKey,
+	);
+	const watermarkJobsByAssetId = useWatermarkJobsStore(
+		(state) => state.jobsByAssetId,
+	);
+	const activeBackgroundItems = useMemo(() => {
+		const sharedTasks = Object.values(backgroundTasksByKey)
+			.filter((task) => task.status === "running")
+			.filter((task) => {
+				if (!selectedElement) {
+					return false;
+				}
+				if (task.elementId && task.elementId === selectedElement.id) {
+					return true;
+				}
+				if (currentAssetId && task.assetId === currentAssetId) {
+					return true;
+				}
+				return false;
+			})
+			.map((task) => ({
+				key: task.key,
+				title: task.title,
+				message: task.message,
+				detail: task.detail,
+				progress: task.progress,
+				tone: "sky" as const,
+			}));
+		const watermarkJob = currentAssetId
+			? (watermarkJobsByAssetId[currentAssetId] ?? null)
+			: null;
+		const watermarkItems =
+			watermarkJob?.status === "running"
+				? [
+						{
+							key: `watermark:${watermarkJob.jobId}`,
+							title: "Watermark",
+							message: watermarkJob.message,
+							detail: watermarkJob.detail,
+							progress: watermarkJob.progress,
+							tone: "emerald" as const,
+						},
+					]
+				: [];
+
+		return [...watermarkItems, ...sharedTasks];
+	}, [
+		backgroundTasksByKey,
+		currentAssetId,
+		selectedElement,
+		watermarkJobsByAssetId,
+	]);
+
+	useEffect(() => {
+		if (selectedElements.length !== 1 || !selectedElement) {
+			setTimelineEditorMode("timeline");
+			return;
+		}
+
+		setTimelineEditorMode(
+			activeTab?.id === "transition" ? "transition" : "timeline",
+		);
+	}, [
+		activeTab?.id,
+		selectedElement,
+		selectedElements.length,
+		setTimelineEditorMode,
+	]);
 
 	if (selectedElements.length === 0) {
 		return (
@@ -31,33 +135,11 @@ export function PropertiesPanel() {
 	}
 
 	if (selectedElements.length > 1) {
-		return (
-			<div className="panel bg-background flex h-full flex-col items-center justify-center overflow-hidden rounded-sm border">
-				<p className="text-muted-foreground text-sm">
-					{selectedElements.length} elements selected.
-				</p>
-			</div>
-		);
+		return <MultiSelectionPanel selectedElements={selectedElements} />;
 	}
 
-	const mediaAssets = editor.media.getAssets();
-
-	const elementsWithTracks = editor.timeline.getElementsWithTracks({
-		elements: selectedElements,
-	});
-	const elementWithTrack = elementsWithTracks[0];
-
 	if (!elementWithTrack) return null;
-
 	const { element, track } = elementWithTrack;
-	const config = getPropertiesConfig({ element, mediaAssets });
-	const visibleTabs = config.tabs;
-
-	const storedTabId = activeTabPerType[element.type];
-	const isStoredTabVisible = visibleTabs.some((t) => t.id === storedTabId);
-	const activeTabId = isStoredTabVisible ? storedTabId : config.defaultTab;
-	const activeTab =
-		visibleTabs.find((t) => t.id === activeTabId) ?? visibleTabs[0];
 
 	if (!activeTab) return null;
 
@@ -71,7 +153,12 @@ export function PropertiesPanel() {
 								<Button
 									variant={tab.id === activeTab.id ? "secondary" : "ghost"}
 									size="icon"
-									onClick={() => setActiveTab(element.type, tab.id)}
+									onClick={() => {
+										setActiveTab(element.type, tab.id);
+										setTimelineEditorMode(
+											tab.id === "transition" ? "transition" : "timeline",
+										);
+									}}
 									aria-label={tab.label}
 									className={cn(
 										"shrink-0",
@@ -92,9 +179,34 @@ export function PropertiesPanel() {
 					<div className="flex items-center gap-2">
 						<span className="text-sm font-semibold">{activeTab.label}</span>
 						<span className="text-muted-foreground truncate text-xs">
-							{"name" in element ? element.name : element.type}
+							{element.name}
 						</span>
 					</div>
+					{activeBackgroundItems.length > 0 ? (
+						<div className="mt-3 flex flex-wrap gap-2">
+							{activeBackgroundItems.map((item) => (
+								<div
+									key={item.key}
+									className={cn(
+										"min-w-0 rounded-lg border px-2.5 py-2 text-xs",
+										item.tone === "emerald"
+											? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+											: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+									)}
+								>
+									<div className="font-semibold">
+										{item.title}
+										{typeof item.progress === "number"
+											? ` ${item.progress}%`
+											: " running"}
+									</div>
+									<div className="truncate">
+										{item.message ?? "Working in background..."}
+									</div>
+								</div>
+							))}
+						</div>
+					) : null}
 				</div>
 				<ScrollArea className="flex-1 scrollbar-hidden">
 					{activeTab.content({ trackId: track.id })}
